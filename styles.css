@@ -1,0 +1,21 @@
+/* SPDX-License-Identifier: MIT */
+/* Style Tags in Search Results — theme/snippet friendly */
+
+/* Core: when the Search leaf has our class, hide wrapped hashtags. 
+   Uses a stable wrapper class so user-configurable classes still work. */
+.workspace-leaf-content[data-type="search"].stisr-hide-tags .stisr-tag {
+  display: none;
+}
+
+/* Optional: authors can style the wrapped tags instead of hiding them, e.g.: */
+
+/*
+.workspace-leaf-content[data-type="search"] .stisr-tag {
+  color: var(--text-accent);
+  background-color: var(--background-modifier-hover);
+  border-radius: 4px;
+  padding: 0 2px;
+}
+
+
+*/
