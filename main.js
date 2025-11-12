@@ -8,8 +8,7 @@ const DEFAULT_SETTINGS = {
   hideInSearch: false,              // toggles .stisr-hide-tags on the Search leaf
   // Advanced (hidden by default)
   showAdvanced: false,              // UI only
-  wrapAheadPx: 128,                 // IntersectionObserver rootMargin vertical px (pre-wrap ahead of viewport)
-  burstTimings: [0, 120, 300]       // ms offsets for rescan burst on query change / tag click
+  wrapAheadPx: 128                  // IntersectionObserver rootMargin vertical px (pre-wrap ahead of viewport)
 };
 
 /** Tag parsing */
@@ -21,7 +20,6 @@ const BOUNDARY = /[\s.,;:!?()[\]{}<>"'“”‘’]/;
 /** Selectors */
 const ROW_SELECTOR = ".search-result-file-match, .search-result__match, .search-result-match";
 const RESULTS_SELECTOR = ".search-results-children, .search-results-info";
-const SEARCH_INPUT_SELECTOR = "input[type='text'], .search-input-container input";
 
 /** Utils */
 const isTagChar  = (ch) => ch != null && TAG_CHAR.test(ch);
@@ -34,50 +32,12 @@ function sig(el) {
   return `${t.length}|${h}`;
 }
 
-/** Observe programmatic value changes on a specific input (per-element patch, not global) */
-function watchInputValue(inputEl, onChange) {
-  const desc =
-    Object.getOwnPropertyDescriptor(Object.getPrototypeOf(inputEl), "value") ||
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
-  const onI = () => onChange();
-
-  if (!desc || typeof desc.set !== "function" || typeof desc.get !== "function") {
-    inputEl.addEventListener("input", onI);
-    inputEl.addEventListener("change", onI);
-    return () => {
-      inputEl.removeEventListener("input", onI);
-      inputEl.removeEventListener("change", onI);
-    };
-  }
-
-  const nativeGet = desc.get;
-  const nativeSet = desc.set;
-  let patched = true;
-
-  Object.defineProperty(inputEl, "value", {
-    configurable: true,
-    enumerable: desc.enumerable,
-    get() { return nativeGet.call(this); },
-    set(v) { nativeSet.call(this, v); if (patched) onChange(); }
-  });
-
-  inputEl.addEventListener("input", onI);
-  inputEl.addEventListener("change", onI);
-
-  return () => {
-    try { patched = false; Object.defineProperty(inputEl, "value", desc); } catch (_) {}
-    inputEl.removeEventListener("input", onI);
-    inputEl.removeEventListener("change", onI);
-  };
-}
-
 module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
   async onload() {
     this.settings = { ...DEFAULT_SETTINGS, ...(await this.loadData()) };
 
     // state
     this._observers = [];
-    this._unwatchers = [];
     this._rowSig = new WeakMap();
     this._processingRoots = new WeakSet();
     this._rowQueue = new Set();
@@ -88,7 +48,6 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
     this.addSettingTab(new StyleTagsInSearchResultsSettingTab(this.app, this));
 
     this.register(() => this._detachAllObservers());
-    this.register(() => this._unwatchAllInputs());
     this.register(() => { if (this._io) { try { this._io.disconnect(); } catch(_){} this._io = null; } });
     this.register(() => { if (this._rafId) cancelAnimationFrame(this._rafId); });
 
@@ -98,18 +57,10 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
 
     // Keep hide state applied
     this._applyHideStateToLeaves();
-
-    // Tag click → programmatic search; run a burst to beat async rebuild races
-    this.registerDomEvent(document, "click", (ev) => {
-      const target = ev.target;
-      if (!(target instanceof Element)) return;
-      if (target.closest("a.tag")) this._runBurst();
-    });
   }
 
   onunload() {
     this._detachAllObservers();
-    this._unwatchAllInputs();
     if (this._io) { try { this._io.disconnect(); } catch(_){} this._io = null; }
     if (this._rafId) cancelAnimationFrame(this._rafId);
     this._revertAllSearchLeaves();
@@ -121,7 +72,6 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
   /** Attach observers, per Search leaf */
   _bindToSearchLeaves(forceFullScan) {
     this._detachAllObservers();
-    this._unwatchAllInputs();
     if (this._io) { try { this._io.disconnect(); } catch(_){} this._io = null; }
 
     const leaves = this.app.workspace.getLeavesOfType("search");
@@ -148,13 +98,6 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
       // Apply hide state at leaf level
       this._applyHideClass(leafEl, this.settings.hideInSearch);
 
-      // Patch the search input (typing + programmatic sets)
-      const inputEl = leafEl.querySelector(SEARCH_INPUT_SELECTOR);
-      if (inputEl instanceof HTMLInputElement) {
-        const unwatch = watchInputValue(inputEl, () => this._runBurst());
-        this._unwatchers.push(unwatch);
-      }
-
       // Initial pass
       const resultsRoot =
         leafEl.querySelector(".search-results-children") ||
@@ -162,9 +105,34 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
         null;
       if (resultsRoot) this._scanRoot(resultsRoot, !!forceFullScan);
 
-      // Observe the results container for *added rows* (scroll/virtualized additions)
-      if (resultsRoot) {
-        const rowObserver = new MutationObserver((muts) => {
+      // Unified observer: handles both container swaps and individual row additions
+      const containerObserver = new MutationObserver((muts) => {
+        let swapped = false;
+
+        // First pass: check if container swapped
+        for (const m of muts) {
+          if (m.type !== "childList") continue;
+          for (const n of m.addedNodes) {
+            if (!(n instanceof HTMLElement)) continue;
+            if (n.matches?.(RESULTS_SELECTOR) || n.querySelector?.(RESULTS_SELECTOR)) {
+              swapped = true;
+              break;
+            }
+          }
+          if (swapped) break;
+        }
+
+        if (swapped) {
+          // Container swapped - full scan
+          const cur =
+            leafEl.querySelector(".search-results-children") ||
+            leafEl.querySelector(".search-results-info");
+          if (cur) {
+            this._applyHideClass(leafEl, this.settings.hideInSearch);
+            this._scanRoot(cur, true);
+          }
+        } else {
+          // No swap - process individual row additions
           for (const m of muts) {
             if (m.type !== "childList") continue;
             for (const n of m.addedNodes) {
@@ -181,30 +149,6 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
               });
             }
           }
-        });
-        rowObserver.observe(resultsRoot, { subtree: true, childList: true });
-        this._observers.push(rowObserver);
-      }
-
-      // Observe container swaps (results replaced entirely)
-      const containerObserver = new MutationObserver((muts) => {
-        let swapped = false;
-        for (const m of muts) {
-          if (m.type !== "childList") continue;
-          for (const n of m.addedNodes) {
-            if (!(n instanceof HTMLElement)) continue;
-            if (n.matches?.(RESULTS_SELECTOR) || n.querySelector?.(RESULTS_SELECTOR)) { swapped = true; break; }
-          }
-          if (swapped) break;
-        }
-        if (swapped) {
-          const cur =
-            leafEl.querySelector(".search-results-children") ||
-            leafEl.querySelector(".search-results-info");
-          if (cur) {
-            this._applyHideClass(leafEl, this.settings.hideInSearch);
-            this._scanRoot(cur, true);
-          }
         }
       });
       containerObserver.observe(leafEl, { subtree: true, childList: true });
@@ -215,24 +159,6 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
   _detachAllObservers() {
     for (const o of this._observers) { try { o.disconnect(); } catch (_) {} }
     this._observers.length = 0;
-  }
-
-  _unwatchAllInputs() {
-    for (const un of this._unwatchers) { try { un(); } catch (_) {} }
-    this._unwatchers.length = 0;
-  }
-
-  /** Burst rescan to beat async Search rebuild races */
-  _runBurst() {
-    const times = Array.isArray(this.settings.burstTimings) ? this.settings.burstTimings : DEFAULT_SETTINGS.burstTimings;
-    const [t0 = 0, t1 = 120, t2 = 300] = times.map((n) => Math.max(0, Number(n) || 0));
-	/*
-	// pass 1: force, after t0 ms (defaults to 0)
-    window.setTimeout(() => this._rescanAllSearchPanes(true), t0);
-    // pass 2: force again after results likely rebuilt
-    window.setTimeout(() => this._rescanAllSearchPanes(true), t1);
-    // pass 3: non-forced tidy pass (cheap)
-    window.setTimeout(() => this._rescanAllSearchPanes(false), t2);*/
   }
 
   /** Batch queue: process at most once per frame */
@@ -556,26 +482,6 @@ class StyleTagsInSearchResultsSettingTab extends PluginSettingTab {
               this.plugin.settings.wrapAheadPx = n;
               this.plugin._saveSettings();
               this.plugin._bindToSearchLeaves(false); // rebuild IO with new margin
-            })
-        );
-
-      // Burst timings
-      new Setting(containerEl)
-        .setName("Burst timings (ms)")
-        .setDesc("Comma-separated delays for query-change rescans. Format: first,second,final (e.g., 0,120,300).")
-        .addText((text) =>
-          text
-            .setPlaceholder(DEFAULT_SETTINGS.burstTimings.join(","))
-            .setValue(
-              Array.isArray(this.plugin.settings.burstTimings)
-                ? this.plugin.settings.burstTimings.join(",")
-                : DEFAULT_SETTINGS.burstTimings.join(",")
-            )
-            .onChange(async (v) => {
-              const parts = String(v).split(",").map((s) => Math.max(0, Number(s.trim()) || 0));
-              const triplet = [parts[0] ?? 0, parts[1] ?? 120, parts[2] ?? 300];
-              this.plugin.settings.burstTimings = triplet;
-              this.plugin._saveSettings();
             })
         );
     }
