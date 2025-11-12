@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 /* global require, module */
-const { Plugin, PluginSettingTab, Setting } = require("obsidian");
+const { Plugin, PluginSettingTab, Setting, debounce } = require("obsidian");
 
 /** Defaults */
 const DEFAULT_SETTINGS = {
@@ -26,7 +26,6 @@ const SEARCH_INPUT_SELECTOR = "input[type='text'], .search-input-container input
 /** Utils */
 const isTagChar  = (ch) => ch != null && TAG_CHAR.test(ch);
 const isBoundary = (ch) => ch == null || BOUNDARY.test(ch);
-const debounce = (fn, ms) => { let t; return (...a) => { if (t) clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 
 /** row signature to avoid rework */
 function sig(el) {
@@ -142,8 +141,9 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
     }, { root: null, rootMargin: `${rootMarginPx}px 0px`, threshold: 0 });
 
     for (const leaf of leaves) {
-      const leafRoot = leaf?.view?.containerEl || leaf?.containerEl || document.body;
-      const leafEl = leafRoot.closest?.('.workspace-leaf-content[data-type="search"]') || leafRoot;
+      const leafRoot = leaf.view?.containerEl || leaf.containerEl;
+      if (!leafRoot) continue;
+      const leafEl = leafRoot.closest('.workspace-leaf-content[data-type="search"]') || leafRoot;
 
       // Apply hide state at leaf level
       this._applyHideClass(leafEl, this.settings.hideInSearch);
@@ -226,13 +226,13 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
   _runBurst() {
     const times = Array.isArray(this.settings.burstTimings) ? this.settings.burstTimings : DEFAULT_SETTINGS.burstTimings;
     const [t0 = 0, t1 = 120, t2 = 300] = times.map((n) => Math.max(0, Number(n) || 0));
-	
+	/*
 	// pass 1: force, after t0 ms (defaults to 0)
-    setTimeout(() => this._rescanAllSearchPanes(true), t0);
+    window.setTimeout(() => this._rescanAllSearchPanes(true), t0);
     // pass 2: force again after results likely rebuilt
-    setTimeout(() => this._rescanAllSearchPanes(true), t1);
+    window.setTimeout(() => this._rescanAllSearchPanes(true), t1);
     // pass 3: non-forced tidy pass (cheap)
-    setTimeout(() => this._rescanAllSearchPanes(false), t2);
+    window.setTimeout(() => this._rescanAllSearchPanes(false), t2);*/
   }
 
   /** Batch queue: process at most once per frame */
@@ -434,8 +434,9 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
     const leaves = this.app.workspace.getLeavesOfType("search");
     if (!leaves?.length) return;
     for (const leaf of leaves) {
-      const leafRoot = leaf?.view?.containerEl || leaf?.containerEl || document.body;
-      const leafEl = leafRoot.closest?.('.workspace-leaf-content[data-type="search"]') || leafRoot;
+      const leafRoot = leaf.view?.containerEl || leaf.containerEl;
+      if (!leafRoot) continue;
+      const leafEl = leafRoot.closest('.workspace-leaf-content[data-type="search"]') || leafRoot;
       this._applyHideClass(leafEl, this.settings.hideInSearch);
     }
     if (!this.settings.hideInSearch) this._clearAllHideClasses();
@@ -452,8 +453,9 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
     const leaves = this.app.workspace.getLeavesOfType("search");
     if (!leaves?.length) return;
     for (const leaf of leaves) {
-      const leafRoot = leaf?.view?.containerEl || leaf?.containerEl || document.body;
-      const leafEl = leafRoot.closest?.('.workspace-leaf-content[data-type="search"]') || leafRoot;
+      const leafRoot = leaf.view?.containerEl || leaf.containerEl;
+      if (!leafRoot) continue;
+      const leafEl = leafRoot.closest('.workspace-leaf-content[data-type="search"]') || leafRoot;
 
       const resultsRoots = leafEl.querySelectorAll(RESULTS_SELECTOR);
       resultsRoots.forEach((resultsRoot) => {
@@ -475,8 +477,9 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
     const leaves = this.app.workspace.getLeavesOfType("search");
     if (!leaves?.length) return;
     for (const leaf of leaves) {
-      const leafRoot = leaf?.view?.containerEl || leaf?.containerEl || document.body;
-      const leafEl = leafRoot.closest?.('.workspace-leaf-content[data-type="search"]') || leafRoot;
+      const leafRoot = leaf.view?.containerEl || leaf.containerEl;
+      if (!leafRoot) continue;
+      const leafEl = leafRoot.closest('.workspace-leaf-content[data-type="search"]') || leafRoot;
       this._applyHideClass(leafEl, this.settings.hideInSearch);
       const resultsRoot =
         leafEl.querySelector(".search-results-children") ||
