@@ -233,10 +233,17 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
 
   /** One-pass wrapper */
   _wrapAllTags(root) {
+    // Collect all text nodes once 
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const textNodes = [];
+    for (let tn; (tn = walker.nextNode()); ) {
+      textNodes.push(tn);
+    }
+
     const collected = [];
 
-    for (let tn; (tn = walker.nextNode()); ) {
+    for (let i = 0; i < textNodes.length; i++) {
+      const tn = textNodes[i];
       if (!tn.nodeValue) continue;
       if (tn.parentElement && tn.parentElement.closest(".stisr-tag, .search-tag")) continue;
 
@@ -247,20 +254,25 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
         const hashPos = text.indexOf("#", j);
         if (hashPos === -1) break;
 
-        const beforeCh = hashPos > 0 ? text[hashPos - 1] : this._prevTextChar(root, tn);
+        const beforeCh = hashPos > 0 ? text[hashPos - 1] : this._getPrevChar(textNodes, i);
         if (!isBoundary(beforeCh)) { j = hashPos + 1; continue; }
 
         let startNode = tn, startOffset = hashPos;
         let endNode = tn, endOffset = hashPos + 1, seenAlnum = false;
+        let endIdx = i;
 
         ({ endOffset, seenAlnum } = this._eatInNode(endNode, endOffset, seenAlnum));
 
         while (endOffset >= (endNode.nodeValue || "").length) {
           const next = this._nextTextNode(root, endNode);
           if (!next) break;
+          const nextIdx = endIdx + 1;
+          if (nextIdx >= textNodes.length) break;
+          const next = textNodes[nextIdx];
           const first = (next.nodeValue || "")[0];
           if (!isTagChar(first)) break;
           endNode = next;
+          endIdx = nextIdx;
           endOffset = 0;
           ({ endOffset, seenAlnum } = this._eatInNode(endNode, endOffset, seenAlnum));
         }
@@ -268,7 +280,7 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
         const afterCh =
           endOffset < (endNode.nodeValue || "").length
             ? (endNode.nodeValue || "")[endOffset]
-            : this._nextTextChar(root, endNode);
+            : this._getNextChar(textNodes, endIdx);
 
         if (!seenAlnum || !isBoundary(afterCh)) { j = hashPos + 1; continue; }
 
@@ -318,33 +330,17 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
     return { endOffset: i, seenAlnum: seen };
   }
 
-  _nextTextNode(root, node) {
-    const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    for (let n = w.nextNode(); n; n = w.nextNode()) if (n === node) break;
-    return w.nextNode();
-  }
-
-  _prevTextChar(root, node) {
-    const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    const texts = [];
-    for (let n = w.nextNode(); n; n = w.nextNode()) texts.push(n);
-    const idx = texts.indexOf(node);
-    if (idx <= 0) return null;
+  _getPrevChar(textNodes, idx) {
     for (let k = idx - 1; k >= 0; k--) {
-      const s = texts[k].nodeValue || "";
+      const s = textNodes[k].nodeValue || "";
       if (s.length > 0) return s[s.length - 1];
     }
     return null;
   }
 
-  _nextTextChar(root, node) {
-    const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    const texts = [];
-    for (let n = w.nextNode(); n; n = w.nextNode()) texts.push(n);
-    const idx = texts.indexOf(node);
-    if (idx === -1) return null;
-    for (let k = idx + 1; k < texts.length; k++) {
-      const s = texts[k].nodeValue || "";
+  _getNextChar(textNodes, idx) {
+    for (let k = idx + 1; k < textNodes.length; k++) {
+      const s = textNodes[k].nodeValue || "";
       if (s.length > 0) return s[0];
     }
     return null;
