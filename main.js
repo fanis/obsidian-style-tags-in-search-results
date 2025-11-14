@@ -99,10 +99,7 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
       this._applyHideClass(leafEl, this.settings.hideInSearch);
 
       // Initial pass
-      const resultsRoot =
-        leafEl.querySelector(".search-results-children") ||
-        leafEl.querySelector(".search-results-info") ||
-        null;
+      const resultsRoot = leafEl.querySelector(".search-results-children, .search-results-info");
       if (resultsRoot) this._scanRoot(resultsRoot, !!forceFullScan);
 
       // Unified observer: handles both container swaps and individual row additions
@@ -114,7 +111,7 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
           if (m.type !== "childList") continue;
           for (const n of m.addedNodes) {
             if (!(n instanceof HTMLElement)) continue;
-            if (n.matches?.(RESULTS_SELECTOR) || n.querySelector?.(RESULTS_SELECTOR)) {
+            if (n.matches(RESULTS_SELECTOR) || n.querySelector(RESULTS_SELECTOR)) {
               swapped = true;
               break;
             }
@@ -124,11 +121,8 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
 
         if (swapped) {
           // Container swapped - full scan
-          const cur =
-            leafEl.querySelector(".search-results-children") ||
-            leafEl.querySelector(".search-results-info");
+          const cur = leafEl.querySelector(".search-results-children, .search-results-info");
           if (cur) {
-            this._applyHideClass(leafEl, this.settings.hideInSearch);
             this._scanRoot(cur, true);
           }
         } else {
@@ -137,12 +131,12 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
             if (m.type !== "childList") continue;
             for (const n of m.addedNodes) {
               if (!(n instanceof HTMLElement)) continue;
-              if (n.matches?.(ROW_SELECTOR)) {
+              if (n.matches(ROW_SELECTOR)) {
                 if (this.settings.hideInSearch) this._processRow(n, false);
                 else this._queueRow(n);
                 this._io.observe(n);
               }
-              n.querySelectorAll?.(ROW_SELECTOR).forEach((row) => {
+              n.querySelectorAll(ROW_SELECTOR).forEach((row) => {
                 if (this.settings.hideInSearch) this._processRow(row, false);
                 else this._queueRow(row);
                 this._io.observe(row);
@@ -197,10 +191,11 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
 
   /** Process a single result row (micro-opt + signature check) */
   _processRow(row, force = false) {
-    // MICRO-OPT: if we've already wrapped this row and it no longer contains '#', skip fast
-    if (!force && row.dataset.stisr === "1" && !(row.textContent || "").includes("#")) return;
-
     const textPeek = row.textContent || "";
+
+    //if we've already wrapped this row and it no longer contains '#', skip fast
+    if (!force && row.dataset.stisr === "1" && !textPeek.includes("#")) return;
+
     if (!textPeek.includes("#")) {
       // reset flag/signature so future changes are noticed
       delete row.dataset.stisr;
@@ -213,10 +208,9 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
     if (!force && lastSig === curSig) return; // nothing changed, skip
 
     // unwrap previous wraps (ours + legacy) if present
-    const hasCurrent = !!row.querySelector(".stisr-tag");
-    const hasLegacy  = !!row.querySelector(".search-tag");
-    if (force || hasLegacy || hasCurrent) {
-      row.querySelectorAll(".stisr-tag, .search-tag").forEach((s) => {
+    const existingWraps = row.querySelectorAll(".stisr-tag, .search-tag");
+    if (force || existingWraps.length > 0) {
+      existingWraps.forEach((s) => {
         const p = s.parentNode; if (!p) return;
         while (s.firstChild) p.insertBefore(s.firstChild, s);
         p.removeChild(s);
@@ -227,7 +221,7 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
     this._cleanupMatchedTextEmpties(row);
 
     // remember signature after processing + set processed flag
-    this._rowSig.set(row, sig(row));
+    this._rowSig.set(row, curSig);
     row.dataset.stisr = "1";
   }
 
@@ -264,8 +258,6 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
         ({ endOffset, seenAlnum } = this._eatInNode(endNode, endOffset, seenAlnum));
 
         while (endOffset >= (endNode.nodeValue || "").length) {
-          const next = this._nextTextNode(root, endNode);
-          if (!next) break;
           const nextIdx = endIdx + 1;
           if (nextIdx >= textNodes.length) break;
           const next = textNodes[nextIdx];
@@ -394,21 +386,6 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
     this._clearAllHideClasses();
   }
 
-  /** Force a rescan across all Search panes (used after tag clicks / input burst) */
-  _rescanAllSearchPanes(force = false) {
-    const leaves = this.app.workspace.getLeavesOfType("search");
-    if (!leaves?.length) return;
-    for (const leaf of leaves) {
-      const leafRoot = leaf.view?.containerEl || leaf.containerEl;
-      if (!leafRoot) continue;
-      const leafEl = leafRoot.closest('.workspace-leaf-content[data-type="search"]') || leafRoot;
-      this._applyHideClass(leafEl, this.settings.hideInSearch);
-      const resultsRoot =
-        leafEl.querySelector(".search-results-children") ||
-        leafEl.querySelector(".search-results-info");
-      if (resultsRoot) this._scanRoot(resultsRoot, !!force);
-    }
-  }
 };
 
 /** Settings tab (no headings, per guidelines) */
