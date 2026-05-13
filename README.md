@@ -4,6 +4,11 @@
 
 The use case that lead to this was to declutter search results when using tags to categorize notes' headings. With this plugin, in search results instead of seeing "My Heading #project #important" you will just see "My Heading".
 
+## Install
+
+- In Obsidian, open **Settings -> Community plugins -> Browse**, search for "Style Tags in Search Results", install and enable.
+- Or view it on the Obsidian community site: <https://community.obsidian.md/plugins/style-tags-in-search-results>.
+
 ## Features
 
 - Adds a CSS class to tags in search results (customizable, by default the class `.search-tag`) to enable styling/modifying them visually with custom CSS.

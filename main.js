@@ -15,6 +15,10 @@ const DEFAULT_SETTINGS = {
 const USE_UNICODE = true;
 const TAG_CHAR = USE_UNICODE ? /[\p{L}\p{N}_/-]/u : /[A-Za-z0-9_/-]/;
 const ALNUM    = USE_UNICODE ? /[\p{L}\p{N}]/u   : /[A-Za-z0-9]/;
+const DIGIT    = USE_UNICODE ? /\p{N}/u          : /[0-9]/;
+// Obsidian's tag parser rejects leading '-' and '/' after '#'. Require the
+// first char after '#' to be a letter, digit, or underscore.
+const FIRST_TAG_CHAR = USE_UNICODE ? /[\p{L}\p{N}_]/u : /[A-Za-z0-9_]/;
 const BOUNDARY = /[\s.,;:!?()[\]{}<>"'“”‘’]/;
 
 /** Selectors */
@@ -25,11 +29,128 @@ const RESULTS_SELECTOR = ".search-results-children, .search-results-info";
 const isTagChar  = (ch) => ch != null && TAG_CHAR.test(ch);
 const isBoundary = (ch) => ch == null || BOUNDARY.test(ch);
 
-/** row signature to avoid rework */
+// Probabilistic row signature: length + '#' count. Skips re-processing when
+// neither changed. Safe because Obsidian's Search re-renders rows on query
+// changes rather than mutating text nodes in place — the collision case
+// (same length + same '#' count but different content) doesn't occur there.
 function sig(el) {
   const t = el.textContent || "";
   const h = (t.match(/#/g) || []).length;
   return `${t.length}|${h}`;
+}
+
+function eatInNode(node, offset, seenAlnum, seenNonDigit) {
+  const s = node.nodeValue || "";
+  let i = offset, seenA = !!seenAlnum, seenND = !!seenNonDigit;
+  while (i < s.length) {
+    const ch = s[i];
+    if (!isTagChar(ch)) break;
+    if (!seenA && ALNUM.test(ch)) seenA = true;
+    if (!seenND && !DIGIT.test(ch)) seenND = true;
+    i++;
+  }
+  return { endOffset: i, seenAlnum: seenA, seenNonDigit: seenND };
+}
+
+function getPrevChar(textNodes, idx) {
+  for (let k = idx - 1; k >= 0; k--) {
+    const s = textNodes[k].nodeValue || "";
+    if (s.length > 0) return s[s.length - 1];
+  }
+  return null;
+}
+
+function getNextChar(textNodes, idx) {
+  for (let k = idx + 1; k < textNodes.length; k++) {
+    const s = textNodes[k].nodeValue || "";
+    if (s.length > 0) return s[0];
+  }
+  return null;
+}
+
+/**
+ * Pure tag detection: given an array of text nodes, return DOM ranges
+ * covering each tag occurrence. A range may span multiple text nodes
+ * (e.g. when search highlighting splits "#foobar" into "#foo" + "bar").
+ */
+function collectTagRanges(textNodes) {
+  const collected = [];
+
+  for (let i = 0; i < textNodes.length; i++) {
+    const tn = textNodes[i];
+    if (!tn.nodeValue) continue;
+    if (tn.parentElement && tn.parentElement.closest(".stisr-tag, .search-tag")) continue;
+
+    const text = tn.nodeValue;
+    let j = 0;
+
+    while (true) {
+      const hashPos = text.indexOf("#", j);
+      if (hashPos === -1) break;
+
+      const beforeCh = hashPos > 0 ? text[hashPos - 1] : getPrevChar(textNodes, i);
+      if (!isBoundary(beforeCh)) { j = hashPos + 1; continue; }
+
+      const firstAfterHash = hashPos + 1 < text.length
+        ? text[hashPos + 1]
+        : getNextChar(textNodes, i);
+      if (!firstAfterHash || !FIRST_TAG_CHAR.test(firstAfterHash)) { j = hashPos + 1; continue; }
+
+      let startNode = tn, startOffset = hashPos;
+      let endNode = tn, endOffset = hashPos + 1, seenAlnum = false, seenNonDigit = false;
+      let endIdx = i;
+
+      ({ endOffset, seenAlnum, seenNonDigit } = eatInNode(endNode, endOffset, seenAlnum, seenNonDigit));
+
+      while (endOffset >= (endNode.nodeValue || "").length) {
+        const nextIdx = endIdx + 1;
+        if (nextIdx >= textNodes.length) break;
+        const next = textNodes[nextIdx];
+        const first = (next.nodeValue || "")[0];
+        if (!isTagChar(first)) break;
+        endNode = next;
+        endIdx = nextIdx;
+        endOffset = 0;
+        ({ endOffset, seenAlnum, seenNonDigit } = eatInNode(endNode, endOffset, seenAlnum, seenNonDigit));
+      }
+
+      const afterCh =
+        endOffset < (endNode.nodeValue || "").length
+          ? (endNode.nodeValue || "")[endOffset]
+          : getNextChar(textNodes, endIdx);
+
+      // Obsidian's rule: tag body must contain at least one non-numerical character.
+      if (!seenAlnum || !seenNonDigit || !isBoundary(afterCh)) { j = hashPos + 1; continue; }
+
+      collected.push({ startNode, startOffset, endNode, endOffset });
+      j = hashPos + 1;
+    }
+  }
+
+  return collected;
+}
+
+/** Mutate the DOM: wrap each range with a <span class="stisr-tag {wrapperClass}">. */
+function wrapRanges(ranges, wrapperClass) {
+  const userCls = wrapperClass || DEFAULT_SETTINGS.wrapperClass;
+  for (let i = ranges.length - 1; i >= 0; i--) {
+    const r = ranges[i];
+    try {
+      const range = document.createRange();
+      range.setStart(r.startNode, r.startOffset);
+      range.setEnd(r.endNode, r.endOffset);
+
+      const wrap = document.createElement("span");
+      wrap.className = `stisr-tag ${userCls}`;
+
+      try { range.surroundContents(wrap); }
+      catch {
+        const frag = range.extractContents();
+        wrap.appendChild(frag);
+        range.insertNode(wrap);
+      }
+    } catch { /* transient DOM state during fast scroll */ }
+  }
 }
 
 module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
@@ -59,7 +180,13 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
     this._applyHideStateToLeaves();
   }
 
-  onunload() {
+  // Async only to make the intent visible: we want any pending debounced
+  // settings save flushed before teardown. Obsidian doesn't await onunload(),
+  // so this doesn't *block* unload, but the in-flight saveData() still drains
+  // on the microtask queue when the plugin is disabled (vs. full app exit,
+  // where neither await nor fire-and-forget can guarantee the write lands).
+  async onunload() {
+    await this._saveSettings.run();
     this._detachAllObservers();
     if (this._io) { try { this._io.disconnect(); } catch(_){} this._io = null; }
     if (this._rafId) cancelAnimationFrame(this._rafId);
@@ -67,7 +194,7 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
     this._clearAllHideClasses();
   }
 
-  _saveSettings = debounce(async () => { await this.saveData(this.settings); }, 120);
+  _saveSettings = debounce(async () => { await this.saveData(this.settings); }, 120, true);
 
   /** Attach observers, per Search leaf */
   _bindToSearchLeaves(forceFullScan) {
@@ -227,80 +354,13 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
 
   /** One-pass wrapper */
   _wrapAllTags(root) {
-    // Collect all text nodes once 
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     const textNodes = [];
-    for (let tn; (tn = walker.nextNode()); ) {
-      textNodes.push(tn);
-    }
+    for (let tn; (tn = walker.nextNode()); ) textNodes.push(tn);
 
-    const collected = [];
-
-    for (let i = 0; i < textNodes.length; i++) {
-      const tn = textNodes[i];
-      if (!tn.nodeValue) continue;
-      if (tn.parentElement && tn.parentElement.closest(".stisr-tag, .search-tag")) continue;
-
-      const text = tn.nodeValue;
-      let j = 0;
-
-      while (true) {
-        const hashPos = text.indexOf("#", j);
-        if (hashPos === -1) break;
-
-        const beforeCh = hashPos > 0 ? text[hashPos - 1] : this._getPrevChar(textNodes, i);
-        if (!isBoundary(beforeCh)) { j = hashPos + 1; continue; }
-
-        let startNode = tn, startOffset = hashPos;
-        let endNode = tn, endOffset = hashPos + 1, seenAlnum = false;
-        let endIdx = i;
-
-        ({ endOffset, seenAlnum } = this._eatInNode(endNode, endOffset, seenAlnum));
-
-        while (endOffset >= (endNode.nodeValue || "").length) {
-          const nextIdx = endIdx + 1;
-          if (nextIdx >= textNodes.length) break;
-          const next = textNodes[nextIdx];
-          const first = (next.nodeValue || "")[0];
-          if (!isTagChar(first)) break;
-          endNode = next;
-          endIdx = nextIdx;
-          endOffset = 0;
-          ({ endOffset, seenAlnum } = this._eatInNode(endNode, endOffset, seenAlnum));
-        }
-
-        const afterCh =
-          endOffset < (endNode.nodeValue || "").length
-            ? (endNode.nodeValue || "")[endOffset]
-            : this._getNextChar(textNodes, endIdx);
-
-        if (!seenAlnum || !isBoundary(afterCh)) { j = hashPos + 1; continue; }
-
-        collected.push({ startNode, startOffset, endNode, endOffset });
-        j = hashPos + 1;
-      }
-    }
-
-    const userCls = this.settings.wrapperClass || DEFAULT_SETTINGS.wrapperClass;
-    for (let i = collected.length - 1; i >= 0; i--) {
-      const r = collected[i];
-      try {
-        const range = document.createRange();
-        range.setStart(r.startNode, r.startOffset);
-        range.setEnd(r.endNode, r.endOffset);
-
-        const wrap = document.createElement("span");
-        wrap.className = `stisr-tag ${userCls}`;
-
-        try { range.surroundContents(wrap); }
-        catch {
-          const frag = range.extractContents();
-          wrap.appendChild(frag);
-          range.insertNode(wrap);
-        }
-      } catch { /* ignore transient */ }
-    }
-    return collected.length > 0;
+    const ranges = collectTagRanges(textNodes);
+    wrapRanges(ranges, this.settings.wrapperClass || DEFAULT_SETTINGS.wrapperClass);
+    return ranges.length > 0;
   }
 
   /** Targeted cleanup: remove empty highlight spans created by Search */
@@ -308,34 +368,6 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
     root.querySelectorAll(".search-result-file-matched-text").forEach((el) => {
       if (!el.firstChild || (el.textContent || "").length === 0) el.remove();
     });
-  }
-
-  _eatInNode(node, offset, seenAlnum) {
-    const s = node.nodeValue || "";
-    let i = offset, seen = !!seenAlnum;
-    while (i < s.length) {
-      const ch = s[i];
-      if (!isTagChar(ch)) break;
-      if (!seen && ALNUM.test(ch)) seen = true;
-      i++;
-    }
-    return { endOffset: i, seenAlnum: seen };
-  }
-
-  _getPrevChar(textNodes, idx) {
-    for (let k = idx - 1; k >= 0; k--) {
-      const s = textNodes[k].nodeValue || "";
-      if (s.length > 0) return s[s.length - 1];
-    }
-    return null;
-  }
-
-  _getNextChar(textNodes, idx) {
-    for (let k = idx + 1; k < textNodes.length; k++) {
-      const s = textNodes[k].nodeValue || "";
-      if (s.length > 0) return s[0];
-    }
-    return null;
   }
 
   /** ---------- Hide via class ---------- */
@@ -460,3 +492,8 @@ class StyleTagsInSearchResultsSettingTab extends PluginSettingTab {
     }
   }
 }
+
+// Test-only exports. Obsidian only instantiates module.exports as a class,
+// so attaching named helpers here has no runtime cost.
+module.exports.collectTagRanges = collectTagRanges;
+module.exports.wrapRanges = wrapRanges;

@@ -1,10 +1,10 @@
 {
   "id": "style-tags-in-search-results",
   "name": "Style Tags in Search Results",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "minAppVersion": "1.5.0",
   "description": "Detect hashtags in the Search pane and apply to them a configurable CSS class to enable styling. Optional one-click hide via injected CSS.",
   "author": "Fanis Hatzidakis",
-  "authorUrl": "https://example.com",
+  "authorUrl": "https://fanis.dev",
   "isDesktopOnly": false
 }

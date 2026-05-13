@@ -1,0 +1,16 @@
+{
+  "name": "obsidian-style-tags-in-search-results",
+  "private": true,
+  "version": "1.1.0",
+  "description": "Obsidian plugin: style tags in search results.",
+  "main": "main.js",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "happy-dom": "^15.11.0",
+    "obsidian": "file:test/obsidian-stub",
+    "vitest": "^2.1.5"
+  }
+}

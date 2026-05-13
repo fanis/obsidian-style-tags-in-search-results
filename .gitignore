@@ -14,3 +14,15 @@ node_modules
 
 # Exclude macOS Finder (System Explorer) View States
 .DS_Store
+
+# Plugin runtime data — must never be bundled into releases
+data.json
+
+# Test runner output
+coverage/
+
+# Claude Code local config (commands, permissions, etc.)
+.claude/
+
+# AI-agent kickstart notes — local only
+AGENTS.md
