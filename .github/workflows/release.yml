@@ -41,6 +41,10 @@ jobs:
         if: steps.check.outputs.exists == 'false'
         run: npm ci
 
+      - name: Lint
+        if: steps.check.outputs.exists == 'false'
+        run: npm run lint
+
       - name: Run tests
         if: steps.check.outputs.exists == 'false'
         run: npm test

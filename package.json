@@ -6,9 +6,12 @@
   "main": "main.js",
   "scripts": {
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "lint": "eslint main.js"
   },
   "devDependencies": {
+    "eslint": "^9.15.0",
+    "eslint-plugin-obsidianmd": "^0.3.0",
     "happy-dom": "^15.11.0",
     "obsidian": "file:test/obsidian-stub",
     "vitest": "^2.1.5"

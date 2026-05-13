@@ -44,9 +44,9 @@ function eatInNode(node, offset, seenAlnum, seenNonDigit) {
   let i = offset, seenA = !!seenAlnum, seenND = !!seenNonDigit;
   while (i < s.length) {
     const ch = s[i];
-    if (!isTagChar(ch)) break;
-    if (!seenA && ALNUM.test(ch)) seenA = true;
-    if (!seenND && !DIGIT.test(ch)) seenND = true;
+    if (!isTagChar(ch)) {break;}
+    if (!seenA && ALNUM.test(ch)) {seenA = true;}
+    if (!seenND && !DIGIT.test(ch)) {seenND = true;}
     i++;
   }
   return { endOffset: i, seenAlnum: seenA, seenNonDigit: seenND };
@@ -55,7 +55,7 @@ function eatInNode(node, offset, seenAlnum, seenNonDigit) {
 function getPrevChar(textNodes, idx) {
   for (let k = idx - 1; k >= 0; k--) {
     const s = textNodes[k].nodeValue || "";
-    if (s.length > 0) return s[s.length - 1];
+    if (s.length > 0) {return s[s.length - 1];}
   }
   return null;
 }
@@ -63,7 +63,7 @@ function getPrevChar(textNodes, idx) {
 function getNextChar(textNodes, idx) {
   for (let k = idx + 1; k < textNodes.length; k++) {
     const s = textNodes[k].nodeValue || "";
-    if (s.length > 0) return s[0];
+    if (s.length > 0) {return s[0];}
   }
   return null;
 }
@@ -78,15 +78,15 @@ function collectTagRanges(textNodes) {
 
   for (let i = 0; i < textNodes.length; i++) {
     const tn = textNodes[i];
-    if (!tn.nodeValue) continue;
-    if (tn.parentElement && tn.parentElement.closest(".stisr-tag, .search-tag")) continue;
+    if (!tn.nodeValue) {continue;}
+    if (tn.parentElement && tn.parentElement.closest(".stisr-tag, .search-tag")) {continue;}
 
     const text = tn.nodeValue;
     let j = 0;
 
     while (true) {
       const hashPos = text.indexOf("#", j);
-      if (hashPos === -1) break;
+      if (hashPos === -1) {break;}
 
       const beforeCh = hashPos > 0 ? text[hashPos - 1] : getPrevChar(textNodes, i);
       if (!isBoundary(beforeCh)) { j = hashPos + 1; continue; }
@@ -104,10 +104,10 @@ function collectTagRanges(textNodes) {
 
       while (endOffset >= (endNode.nodeValue || "").length) {
         const nextIdx = endIdx + 1;
-        if (nextIdx >= textNodes.length) break;
+        if (nextIdx >= textNodes.length) {break;}
         const next = textNodes[nextIdx];
         const first = (next.nodeValue || "")[0];
-        if (!isTagChar(first)) break;
+        if (!isTagChar(first)) {break;}
         endNode = next;
         endIdx = nextIdx;
         endOffset = 0;
@@ -169,8 +169,8 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
     this.addSettingTab(new StyleTagsInSearchResultsSettingTab(this.app, this));
 
     this.register(() => this._detachAllObservers());
-    this.register(() => { if (this._io) { try { this._io.disconnect(); } catch(_){} this._io = null; } });
-    this.register(() => { if (this._rafId) cancelAnimationFrame(this._rafId); });
+    this.register(() => { if (this._io) { this._io.disconnect(); this._io = null; } });
+    this.register(() => { if (this._rafId) {window.cancelAnimationFrame(this._rafId);} });
 
     // Bind now and on layout changes
     this._bindToSearchLeaves(true);
@@ -188,8 +188,8 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
   async onunload() {
     await this._saveSettings.run();
     this._detachAllObservers();
-    if (this._io) { try { this._io.disconnect(); } catch(_){} this._io = null; }
-    if (this._rafId) cancelAnimationFrame(this._rafId);
+    if (this._io) { this._io.disconnect(); this._io = null; }
+    if (this._rafId) {window.cancelAnimationFrame(this._rafId);}
     this._revertAllSearchLeaves();
     this._clearAllHideClasses();
   }
@@ -199,27 +199,27 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
   /** Attach observers, per Search leaf */
   _bindToSearchLeaves(forceFullScan) {
     this._detachAllObservers();
-    if (this._io) { try { this._io.disconnect(); } catch(_){} this._io = null; }
+    if (this._io) { this._io.disconnect(); this._io = null; }
 
     const leaves = this.app.workspace.getLeavesOfType("search");
-    if (!leaves?.length) return;
+    if (!leaves?.length) {return;}
 
     // IntersectionObserver to catch rows revealed during scroll/virtualization
     const rootMarginPx = Math.max(0, Number(this.settings.wrapAheadPx) || DEFAULT_SETTINGS.wrapAheadPx);
     this._io = new IntersectionObserver((entries) => {
       for (const e of entries) {
-        if (!e.isIntersecting) continue;
+        if (!e.isIntersecting) {continue;}
         const row = e.target;
-        if (!(row instanceof HTMLElement)) continue;
+        if (!(row instanceof HTMLElement)) {continue;}
         // Immediate wrap if hide is ON (minimize flash), else batch to next frame
-        if (this.settings.hideInSearch) this._processRow(row, false);
-        else this._queueRow(row);
+        if (this.settings.hideInSearch) {this._processRow(row, false);}
+        else {this._queueRow(row);}
       }
     }, { root: null, rootMargin: `${rootMarginPx}px 0px`, threshold: 0 });
 
     for (const leaf of leaves) {
       const leafRoot = leaf.view?.containerEl || leaf.containerEl;
-      if (!leafRoot) continue;
+      if (!leafRoot) {continue;}
       const leafEl = leafRoot.closest('.workspace-leaf-content[data-type="search"]') || leafRoot;
 
       // Apply hide state at leaf level
@@ -227,7 +227,7 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
 
       // Initial pass
       const resultsRoot = leafEl.querySelector(".search-results-children, .search-results-info");
-      if (resultsRoot) this._scanRoot(resultsRoot, !!forceFullScan);
+      if (resultsRoot) {this._scanRoot(resultsRoot, !!forceFullScan);}
 
       // Unified observer: handles both container swaps and individual row additions
       const containerObserver = new MutationObserver((muts) => {
@@ -235,15 +235,15 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
 
         // First pass: check if container swapped
         for (const m of muts) {
-          if (m.type !== "childList") continue;
+          if (m.type !== "childList") {continue;}
           for (const n of m.addedNodes) {
-            if (!(n instanceof HTMLElement)) continue;
+            if (!(n instanceof HTMLElement)) {continue;}
             if (n.matches(RESULTS_SELECTOR) || n.querySelector(RESULTS_SELECTOR)) {
               swapped = true;
               break;
             }
           }
-          if (swapped) break;
+          if (swapped) {break;}
         }
 
         if (swapped) {
@@ -255,17 +255,17 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
         } else {
           // No swap - process individual row additions
           for (const m of muts) {
-            if (m.type !== "childList") continue;
+            if (m.type !== "childList") {continue;}
             for (const n of m.addedNodes) {
-              if (!(n instanceof HTMLElement)) continue;
+              if (!(n instanceof HTMLElement)) {continue;}
               if (n.matches(ROW_SELECTOR)) {
-                if (this.settings.hideInSearch) this._processRow(n, false);
-                else this._queueRow(n);
+                if (this.settings.hideInSearch) {this._processRow(n, false);}
+                else {this._queueRow(n);}
                 this._io.observe(n);
               }
               n.querySelectorAll(ROW_SELECTOR).forEach((row) => {
-                if (this.settings.hideInSearch) this._processRow(row, false);
-                else this._queueRow(row);
+                if (this.settings.hideInSearch) {this._processRow(row, false);}
+                else {this._queueRow(row);}
                 this._io.observe(row);
               });
             }
@@ -278,38 +278,38 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
   }
 
   _detachAllObservers() {
-    for (const o of this._observers) { try { o.disconnect(); } catch (_) {} }
+    for (const o of this._observers) {o.disconnect();}
     this._observers.length = 0;
   }
 
   /** Batch queue: process at most once per frame */
   _queueRow(row) {
-    if (!(row instanceof HTMLElement)) return;
-    if (!row.matches(ROW_SELECTOR)) return;
+    if (!(row instanceof HTMLElement)) {return;}
+    if (!row.matches(ROW_SELECTOR)) {return;}
     this._rowQueue.add(row);
     if (this._rafId == null) {
-      this._rafId = requestAnimationFrame(() => {
+      this._rafId = window.requestAnimationFrame(() => {
         this._rafId = null;
         const rows = Array.from(this._rowQueue);
         this._rowQueue.clear();
-        for (const r of rows) if (r.isConnected) this._processRow(r, false);
+        for (const r of rows) {if (r.isConnected) {this._processRow(r, false);}}
       });
     }
   }
 
   /** Full container scan (idempotent; guarded) */
   _scanRoot(root, force = false) {
-    if (!root || !root.querySelectorAll) return;
-    if (this._processingRoots.has(root)) return;
+    if (!root || !root.querySelectorAll) {return;}
+    if (this._processingRoots.has(root)) {return;}
     this._processingRoots.add(root);
     try {
       const rows = root.querySelectorAll(ROW_SELECTOR);
       rows.forEach((row) => {
         // Observe for viewport triggers
-        try { this._io && this._io.observe(row); } catch(_) {}
+        if (this._io) {this._io.observe(row);}
         // Immediate when hide is on (minimize flash), else queue to next frame
-        if (this.settings.hideInSearch) this._processRow(row, force);
-        else this._queueRow(row);
+        if (this.settings.hideInSearch) {this._processRow(row, force);}
+        else {this._queueRow(row);}
       });
     } finally {
       this._processingRoots.delete(root);
@@ -321,7 +321,7 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
     const textPeek = row.textContent || "";
 
     //if we've already wrapped this row and it no longer contains '#', skip fast
-    if (!force && row.dataset.stisr === "1" && !textPeek.includes("#")) return;
+    if (!force && row.dataset.stisr === "1" && !textPeek.includes("#")) {return;}
 
     if (!textPeek.includes("#")) {
       // reset flag/signature so future changes are noticed
@@ -332,14 +332,14 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
 
     const curSig = sig(row);
     const lastSig = this._rowSig.get(row);
-    if (!force && lastSig === curSig) return; // nothing changed, skip
+    if (!force && lastSig === curSig) {return;} // nothing changed, skip
 
     // unwrap previous wraps (ours + legacy) if present
     const existingWraps = row.querySelectorAll(".stisr-tag, .search-tag");
     if (force || existingWraps.length > 0) {
       existingWraps.forEach((s) => {
-        const p = s.parentNode; if (!p) return;
-        while (s.firstChild) p.insertBefore(s.firstChild, s);
+        const p = s.parentNode; if (!p) {return;}
+        while (s.firstChild) {p.insertBefore(s.firstChild, s);}
         p.removeChild(s);
       });
     }
@@ -356,7 +356,7 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
   _wrapAllTags(root) {
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     const textNodes = [];
-    for (let tn; (tn = walker.nextNode()); ) textNodes.push(tn);
+    for (let tn; (tn = walker.nextNode()); ) {textNodes.push(tn);}
 
     const ranges = collectTagRanges(textNodes);
     wrapRanges(ranges, this.settings.wrapperClass || DEFAULT_SETTINGS.wrapperClass);
@@ -366,48 +366,51 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
   /** Targeted cleanup: remove empty highlight spans created by Search */
   _cleanupMatchedTextEmpties(root) {
     root.querySelectorAll(".search-result-file-matched-text").forEach((el) => {
-      if (!el.firstChild || (el.textContent || "").length === 0) el.remove();
+      if (!el.firstChild || (el.textContent || "").length === 0) {el.remove();}
     });
   }
 
   /** ---------- Hide via class ---------- */
   _applyHideClass(leafEl, shouldHide) {
-    if (!(leafEl instanceof HTMLElement)) return;
+    if (!(leafEl instanceof HTMLElement)) {return;}
     leafEl.classList.toggle("stisr-hide-tags", !!shouldHide);
   }
 
   _applyHideStateToLeaves() {
     const leaves = this.app.workspace.getLeavesOfType("search");
-    if (!leaves?.length) return;
+    if (!leaves?.length) {return;}
     for (const leaf of leaves) {
       const leafRoot = leaf.view?.containerEl || leaf.containerEl;
-      if (!leafRoot) continue;
+      if (!leafRoot) {continue;}
       const leafEl = leafRoot.closest('.workspace-leaf-content[data-type="search"]') || leafRoot;
       this._applyHideClass(leafEl, this.settings.hideInSearch);
     }
-    if (!this.settings.hideInSearch) this._clearAllHideClasses();
+    if (!this.settings.hideInSearch) {this._clearAllHideClasses();}
   }
 
   _clearAllHideClasses() {
-    document
-      .querySelectorAll('.workspace-leaf-content[data-type="search"].stisr-hide-tags')
-      .forEach((el) => el.classList.remove("stisr-hide-tags"));
+    for (const leaf of this.app.workspace.getLeavesOfType("search")) {
+      const leafRoot = leaf.view?.containerEl || leaf.containerEl;
+      if (!leafRoot) {continue;}
+      const leafEl = leafRoot.closest('.workspace-leaf-content[data-type="search"]') || leafRoot;
+      this._applyHideClass(leafEl, false);
+    }
   }
 
   /** ---------- Revert on disable ---------- */
   _revertAllSearchLeaves() {
     const leaves = this.app.workspace.getLeavesOfType("search");
-    if (!leaves?.length) return;
+    if (!leaves?.length) {return;}
     for (const leaf of leaves) {
       const leafRoot = leaf.view?.containerEl || leaf.containerEl;
-      if (!leafRoot) continue;
+      if (!leafRoot) {continue;}
       const leafEl = leafRoot.closest('.workspace-leaf-content[data-type="search"]') || leafRoot;
 
       const resultsRoots = leafEl.querySelectorAll(RESULTS_SELECTOR);
       resultsRoots.forEach((resultsRoot) => {
         resultsRoot.querySelectorAll(".stisr-tag, .search-tag").forEach((s) => {
-          const p = s.parentNode; if (!p) return;
-          while (s.firstChild) p.insertBefore(s.firstChild, s);
+          const p = s.parentNode; if (!p) {return;}
+          while (s.firstChild) {p.insertBefore(s.firstChild, s);}
           p.removeChild(s);
         });
         this._cleanupMatchedTextEmpties(resultsRoot);
@@ -446,8 +449,8 @@ class StyleTagsInSearchResultsSettingTab extends PluginSettingTab {
 
     // Hide toggle
     new Setting(containerEl)
-      .setName("Hide wrapped hashtags in Search")
-      .setDesc("Toggles a CSS class on the Search leaf; themes/snippets control visibility.")
+      .setName("Hide wrapped hashtags in search")
+      .setDesc("Toggles a CSS class on the search leaf; themes/snippets control visibility.")
       .addToggle((toggle) =>
         toggle
           .setValue(!!this.plugin.settings.hideInSearch)
