@@ -7,13 +7,16 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "eslint main.js"
+    "lint": "eslint main.js",
+    "format": "prettier --write \"**/*.{js,mjs,cjs,json,md,yml,yaml}\"",
+    "format:check": "prettier --check \"**/*.{js,mjs,cjs,json,md,yml,yaml}\""
   },
   "devDependencies": {
     "eslint": "^9.15.0",
     "eslint-plugin-obsidianmd": "^0.3.0",
     "happy-dom": "^15.11.0",
     "obsidian": "file:test/obsidian-stub",
+    "prettier": "^3.3.3",
     "vitest": "^2.1.5"
   }
 }

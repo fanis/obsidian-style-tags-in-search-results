@@ -9,12 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - ESLint with `eslint-plugin-obsidianmd` recommended config. Wired into the release workflow alongside tests.
 - `curly: ["error", "all"]` ESLint rule — single-statement `if`/`else`/`for`/`while` without braces is now a lint error.
+- Prettier formatting (`.prettierrc.json`): 100-char print width, 2-space tabs, double quotes, trailing commas, K&R braces. `npm run format` reformats; `npm run format:check` verifies.
 
 ### Changed
 - Settings UI text uses sentence case per Obsidian's UI guidelines ("Hide wrapped hashtags in search").
 - `_clearAllHideClasses` now uses `app.workspace.getLeavesOfType("search")` instead of `document.querySelectorAll`, per the Obsidian guideline against recovering the search leaf from `document.body`.
 - Animation-frame calls use `window.requestAnimationFrame` / `window.cancelAnimationFrame` for explicit window binding.
 - Removed unnecessary defensive `try`/`catch` blocks around `IntersectionObserver.disconnect()`, `MutationObserver.disconnect()`, and `IntersectionObserver.observe()` calls (none throw per spec).
+- Reformatted the entire codebase via Prettier (mechanical change only).
 
 ## [1.1.0] - 2026-05-13
 ### Added

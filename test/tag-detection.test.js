@@ -9,7 +9,10 @@ function build(html) {
   root.innerHTML = html;
   const textNodes = [];
   (function walk(node) {
-    if (node.nodeType === 3) { textNodes.push(node); return; }
+    if (node.nodeType === 3) {
+      textNodes.push(node);
+      return;
+    }
     for (const child of node.childNodes) walk(child);
   })(root);
   return { root, textNodes };
@@ -138,7 +141,7 @@ describe("collectTagRanges - rejection", () => {
 describe("collectTagRanges - cross-text-node tags", () => {
   test("merges tag split by inline element (e.g., search highlight)", () => {
     // Simulates Obsidian's search highlight: <mark> in the middle of a tag.
-    const { textNodes } = build('hello #foo<mark>bar</mark> baz');
+    const { textNodes } = build("hello #foo<mark>bar</mark> baz");
     const ranges = collectTagRanges(textNodes);
     expect(ranges).toHaveLength(1);
     // span across nodes: start in "hello #foo", end in "bar"
@@ -148,7 +151,7 @@ describe("collectTagRanges - cross-text-node tags", () => {
   });
 
   test("does not extend into a node whose first char is a boundary", () => {
-    const { textNodes } = build('hello #foo<mark> bar</mark>');
+    const { textNodes } = build("hello #foo<mark> bar</mark>");
     // " bar" starts with space -> stop extending; tag is just "#foo".
     const ranges = collectTagRanges(textNodes);
     expect(ranges).toHaveLength(1);
@@ -157,7 +160,7 @@ describe("collectTagRanges - cross-text-node tags", () => {
 
   test("respects boundary check across nodes when '#' is at end of one node", () => {
     // '#' at end of first text node, alnum starts in next node: accept and span.
-    const { textNodes } = build('hello #<mark>foo</mark> bar');
+    const { textNodes } = build("hello #<mark>foo</mark> bar");
     const ranges = collectTagRanges(textNodes);
     expect(ranges).toHaveLength(1);
     expect(rangeText(ranges[0])).toBe("#foo");
@@ -192,7 +195,7 @@ describe("wrapRanges - DOM mutation", () => {
   });
 
   test("wraps a cross-node range using extractContents fallback", () => {
-    const { root, textNodes } = build('hello #foo<mark>bar</mark> baz');
+    const { root, textNodes } = build("hello #foo<mark>bar</mark> baz");
     const ranges = collectTagRanges(textNodes);
     wrapRanges(ranges, "search-tag");
     const wraps = root.querySelectorAll(".stisr-tag");
@@ -206,4 +209,3 @@ describe("wrapRanges - DOM mutation", () => {
     expect(root.querySelector(".stisr-tag").className).toBe("stisr-tag search-tag");
   });
 });
-
