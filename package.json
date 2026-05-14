@@ -5,18 +5,23 @@
   "description": "Obsidian plugin: style tags in search results.",
   "main": "main.js",
   "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc --noEmit && node esbuild.config.mjs production",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "eslint main.js",
-    "format": "prettier --write \"**/*.{js,mjs,cjs,json,md,yml,yaml}\"",
-    "format:check": "prettier --check \"**/*.{js,mjs,cjs,json,md,yml,yaml}\""
+    "lint": "eslint main.ts",
+    "format": "prettier --write \"**/*.{ts,js,mjs,cjs,json,md,yml,yaml}\"",
+    "format:check": "prettier --check \"**/*.{ts,js,mjs,cjs,json,md,yml,yaml}\""
   },
   "devDependencies": {
-    "eslint": "^9.15.0",
-    "eslint-plugin-obsidianmd": "^0.3.0",
-    "happy-dom": "^15.11.0",
-    "obsidian": "file:test/obsidian-stub",
-    "prettier": "^3.3.3",
-    "vitest": "^2.1.5"
+    "builtin-modules": "5.2.0",
+    "esbuild": "0.28.0",
+    "eslint": "9.39.4",
+    "eslint-plugin-obsidianmd": "0.3.0",
+    "happy-dom": "15.11.7",
+    "obsidian": "1.12.3",
+    "prettier": "3.8.3",
+    "typescript": "6.0.3",
+    "vitest": "2.1.9"
   }
 }

@@ -49,6 +49,10 @@ jobs:
         if: steps.check.outputs.exists == 'false'
         run: npm test
 
+      - name: Build
+        if: steps.check.outputs.exists == 'false'
+        run: npm run build
+
       - name: Attest build provenance
         if: steps.check.outputs.exists == 'false'
         uses: actions/attest-build-provenance@v2

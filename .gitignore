@@ -9,6 +9,9 @@
 node_modules
 
 
+# Built plugin bundle - produced by `npm run build`, attached to GitHub releases
+main.js
+
 # Exclude sourcemaps
 *.map
 
@@ -23,6 +26,7 @@ coverage/
 
 # Claude Code local config (commands, permissions, etc.)
 .claude/
+.claude.local.md
 
 # AI-agent kickstart notes — local only
 AGENTS.md

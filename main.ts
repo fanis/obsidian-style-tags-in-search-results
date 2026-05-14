@@ -1,9 +1,15 @@
 // SPDX-License-Identifier: MIT
-/* global require, module */
-const { Plugin, PluginSettingTab, Setting, debounce } = require("obsidian");
+import { App, Plugin, PluginSettingTab, Setting, debounce, Debouncer } from "obsidian";
 
 /** Defaults */
-const DEFAULT_SETTINGS = {
+interface StisrSettings {
+  wrapperClass: string;
+  hideInSearch: boolean;
+  showAdvanced: boolean;
+  wrapAheadPx: number;
+}
+
+const DEFAULT_SETTINGS: StisrSettings = {
   wrapperClass: "search-tag", // added alongside stable 'stisr-tag'
   hideInSearch: false, // toggles .stisr-hide-tags on the Search leaf
   // Advanced (hidden by default)
@@ -26,24 +32,42 @@ const ROW_SELECTOR = ".search-result-file-match, .search-result__match, .search-
 const RESULTS_SELECTOR = ".search-results-children, .search-results-info";
 
 /** Utils */
-const isTagChar = (ch) => ch != null && TAG_CHAR.test(ch);
-const isBoundary = (ch) => ch == null || BOUNDARY.test(ch);
+const isTagChar = (ch: string | null | undefined): boolean => ch != null && TAG_CHAR.test(ch);
+const isBoundary = (ch: string | null | undefined): boolean => ch == null || BOUNDARY.test(ch);
+
+interface TagRange {
+  startNode: Text;
+  startOffset: number;
+  endNode: Text;
+  endOffset: number;
+}
+
+interface EatResult {
+  endOffset: number;
+  seenAlnum: boolean;
+  seenNonDigit: boolean;
+}
 
 // Probabilistic row signature: length + '#' count. Skips re-processing when
 // neither changed. Safe because Obsidian's Search re-renders rows on query
 // changes rather than mutating text nodes in place — the collision case
 // (same length + same '#' count but different content) doesn't occur there.
-function sig(el) {
+function sig(el: Element): string {
   const t = el.textContent || "";
   const h = (t.match(/#/g) || []).length;
   return `${t.length}|${h}`;
 }
 
-function eatInNode(node, offset, seenAlnum, seenNonDigit) {
+function eatInNode(
+  node: Text,
+  offset: number,
+  seenAlnum: boolean,
+  seenNonDigit: boolean,
+): EatResult {
   const s = node.nodeValue || "";
   let i = offset,
-    seenA = !!seenAlnum,
-    seenND = !!seenNonDigit;
+    seenA = seenAlnum,
+    seenND = seenNonDigit;
   while (i < s.length) {
     const ch = s[i];
     if (!isTagChar(ch)) {
@@ -60,7 +84,7 @@ function eatInNode(node, offset, seenAlnum, seenNonDigit) {
   return { endOffset: i, seenAlnum: seenA, seenNonDigit: seenND };
 }
 
-function getPrevChar(textNodes, idx) {
+function getPrevChar(textNodes: Text[], idx: number): string | null {
   for (let k = idx - 1; k >= 0; k--) {
     const s = textNodes[k].nodeValue || "";
     if (s.length > 0) {
@@ -70,7 +94,7 @@ function getPrevChar(textNodes, idx) {
   return null;
 }
 
-function getNextChar(textNodes, idx) {
+function getNextChar(textNodes: Text[], idx: number): string | null {
   for (let k = idx + 1; k < textNodes.length; k++) {
     const s = textNodes[k].nodeValue || "";
     if (s.length > 0) {
@@ -85,8 +109,8 @@ function getNextChar(textNodes, idx) {
  * covering each tag occurrence. A range may span multiple text nodes
  * (e.g. when search highlighting splits "#foobar" into "#foo" + "bar").
  */
-function collectTagRanges(textNodes) {
-  const collected = [];
+export function collectTagRanges(textNodes: Text[]): TagRange[] {
+  const collected: TagRange[] = [];
 
   for (let i = 0; i < textNodes.length; i++) {
     const tn = textNodes[i];
@@ -119,7 +143,7 @@ function collectTagRanges(textNodes) {
         continue;
       }
 
-      let startNode = tn,
+      const startNode = tn,
         startOffset = hashPos;
       let endNode = tn,
         endOffset = hashPos + 1,
@@ -175,16 +199,21 @@ function collectTagRanges(textNodes) {
 }
 
 /** Mutate the DOM: wrap each range with a <span class="stisr-tag {wrapperClass}">. */
-function wrapRanges(ranges, wrapperClass) {
+export function wrapRanges(ranges: TagRange[], wrapperClass: string): void {
   const userCls = wrapperClass || DEFAULT_SETTINGS.wrapperClass;
   for (let i = ranges.length - 1; i >= 0; i--) {
     const r = ranges[i];
+    // Wrap in the document the nodes actually live in, not the global one.
+    const doc = r.startNode.ownerDocument;
+    if (!doc) {
+      continue;
+    }
     try {
-      const range = document.createRange();
+      const range = doc.createRange();
       range.setStart(r.startNode, r.startOffset);
       range.setEnd(r.endNode, r.endOffset);
 
-      const wrap = document.createElement("span");
+      const wrap = doc.createElement("span");
       wrap.className = `stisr-tag ${userCls}`;
 
       try {
@@ -200,17 +229,28 @@ function wrapRanges(ranges, wrapperClass) {
   }
 }
 
-module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
-  async onload() {
-    this.settings = { ...DEFAULT_SETTINGS, ...(await this.loadData()) };
+export default class StyleTagsInSearchResultsPlugin extends Plugin {
+  settings: StisrSettings = { ...DEFAULT_SETTINGS };
 
-    // state
-    this._observers = [];
-    this._rowSig = new WeakMap();
-    this._processingRoots = new WeakSet();
-    this._rowQueue = new Set();
-    this._rafId = null;
-    this._io = null;
+  // state
+  _observers: MutationObserver[] = [];
+  _rowSig: WeakMap<Element, string> = new WeakMap();
+  _processingRoots: WeakSet<Element> = new WeakSet();
+  _rowQueue: Set<HTMLElement> = new Set();
+  _rafId: number | null = null;
+  _io: IntersectionObserver | null = null;
+
+  _saveSettings: Debouncer<[], Promise<void>> = debounce(
+    async () => {
+      await this.saveData(this.settings);
+    },
+    120,
+    true,
+  );
+
+  async onload(): Promise<void> {
+    const saved = (await this.loadData()) as Partial<StisrSettings> | null;
+    this.settings = { ...DEFAULT_SETTINGS, ...saved };
 
     // settings UI
     this.addSettingTab(new StyleTagsInSearchResultsSettingTab(this.app, this));
@@ -238,13 +278,13 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
     this._applyHideStateToLeaves();
   }
 
-  // Async only to make the intent visible: we want any pending debounced
-  // settings save flushed before teardown. Obsidian doesn't await onunload(),
-  // so this doesn't *block* unload, but the in-flight saveData() still drains
-  // on the microtask queue when the plugin is disabled (vs. full app exit,
-  // where neither await nor fire-and-forget can guarantee the write lands).
-  async onunload() {
-    await this._saveSettings.run();
+  // Obsidian doesn't await onunload(), so flushing the debounced settings save
+  // here can't *block* teardown — but `run()` invokes the pending save
+  // synchronously, so the in-flight saveData() still drains on the microtask
+  // queue when the plugin is disabled (vs. full app exit, where neither form
+  // can guarantee the write lands).
+  onunload(): void {
+    void this._saveSettings.run();
     this._detachAllObservers();
     if (this._io) {
       this._io.disconnect();
@@ -257,16 +297,8 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
     this._clearAllHideClasses();
   }
 
-  _saveSettings = debounce(
-    async () => {
-      await this.saveData(this.settings);
-    },
-    120,
-    true,
-  );
-
   /** Attach observers, per Search leaf */
-  _bindToSearchLeaves(forceFullScan) {
+  _bindToSearchLeaves(forceFullScan: boolean): void {
     this._detachAllObservers();
     if (this._io) {
       this._io.disconnect();
@@ -274,7 +306,7 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
     }
 
     const leaves = this.app.workspace.getLeavesOfType("search");
-    if (!leaves?.length) {
+    if (!leaves.length) {
       return;
     }
 
@@ -290,7 +322,7 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
             continue;
           }
           const row = e.target;
-          if (!(row instanceof HTMLElement)) {
+          if (!row.instanceOf(HTMLElement)) {
             continue;
           }
           // Immediate wrap if hide is ON (minimize flash), else batch to next frame
@@ -305,7 +337,7 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
     );
 
     for (const leaf of leaves) {
-      const leafRoot = leaf.view?.containerEl || leaf.containerEl;
+      const leafRoot = leaf.view?.containerEl;
       if (!leafRoot) {
         continue;
       }
@@ -317,7 +349,7 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
       // Initial pass
       const resultsRoot = leafEl.querySelector(".search-results-children, .search-results-info");
       if (resultsRoot) {
-        this._scanRoot(resultsRoot, !!forceFullScan);
+        this._scanRoot(resultsRoot, forceFullScan);
       }
 
       // Unified observer: handles both container swaps and individual row additions
@@ -330,7 +362,7 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
             continue;
           }
           for (const n of m.addedNodes) {
-            if (!(n instanceof HTMLElement)) {
+            if (!n.instanceOf(HTMLElement)) {
               continue;
             }
             if (n.matches(RESULTS_SELECTOR) || n.querySelector(RESULTS_SELECTOR)) {
@@ -356,7 +388,7 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
               continue;
             }
             for (const n of m.addedNodes) {
-              if (!(n instanceof HTMLElement)) {
+              if (!n.instanceOf(HTMLElement)) {
                 continue;
               }
               if (n.matches(ROW_SELECTOR)) {
@@ -365,7 +397,7 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
                 } else {
                   this._queueRow(n);
                 }
-                this._io.observe(n);
+                this._io?.observe(n);
               }
               n.querySelectorAll(ROW_SELECTOR).forEach((row) => {
                 if (this.settings.hideInSearch) {
@@ -373,7 +405,7 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
                 } else {
                   this._queueRow(row);
                 }
-                this._io.observe(row);
+                this._io?.observe(row);
               });
             }
           }
@@ -384,7 +416,7 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
     }
   }
 
-  _detachAllObservers() {
+  _detachAllObservers(): void {
     for (const o of this._observers) {
       o.disconnect();
     }
@@ -392,8 +424,8 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
   }
 
   /** Batch queue: process at most once per frame */
-  _queueRow(row) {
-    if (!(row instanceof HTMLElement)) {
+  _queueRow(row: Element): void {
+    if (!row.instanceOf(HTMLElement)) {
       return;
     }
     if (!row.matches(ROW_SELECTOR)) {
@@ -415,10 +447,7 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
   }
 
   /** Full container scan (idempotent; guarded) */
-  _scanRoot(root, force = false) {
-    if (!root || !root.querySelectorAll) {
-      return;
-    }
+  _scanRoot(root: Element, force = false): void {
     if (this._processingRoots.has(root)) {
       return;
     }
@@ -427,9 +456,7 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
       const rows = root.querySelectorAll(ROW_SELECTOR);
       rows.forEach((row) => {
         // Observe for viewport triggers
-        if (this._io) {
-          this._io.observe(row);
-        }
+        this._io?.observe(row);
         // Immediate when hide is on (minimize flash), else queue to next frame
         if (this.settings.hideInSearch) {
           this._processRow(row, force);
@@ -443,7 +470,10 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
   }
 
   /** Process a single result row (micro-opt + signature check) */
-  _processRow(row, force = false) {
+  _processRow(row: Element, force = false): void {
+    if (!row.instanceOf(HTMLElement)) {
+      return;
+    }
     const textPeek = row.textContent || "";
 
     //if we've already wrapped this row and it no longer contains '#', skip fast
@@ -453,7 +483,7 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
 
     if (!textPeek.includes("#")) {
       // reset flag/signature so future changes are noticed
-      delete row.dataset.stisr;
+      row.removeAttribute("data-stisr");
       this._rowSig.delete(row);
       return;
     }
@@ -468,14 +498,7 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
     const existingWraps = row.querySelectorAll(".stisr-tag, .search-tag");
     if (force || existingWraps.length > 0) {
       existingWraps.forEach((s) => {
-        const p = s.parentNode;
-        if (!p) {
-          return;
-        }
-        while (s.firstChild) {
-          p.insertBefore(s.firstChild, s);
-        }
-        p.removeChild(s);
+        s.replaceWith(...Array.from(s.childNodes));
       });
     }
 
@@ -488,11 +511,15 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
   }
 
   /** One-pass wrapper */
-  _wrapAllTags(root) {
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    const textNodes = [];
-    for (let tn; (tn = walker.nextNode()); ) {
-      textNodes.push(tn);
+  _wrapAllTags(root: Element): boolean {
+    const doc = root.ownerDocument;
+    if (!doc) {
+      return false;
+    }
+    const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const textNodes: Text[] = [];
+    for (let tn = walker.nextNode(); tn; tn = walker.nextNode()) {
+      textNodes.push(tn as Text);
     }
 
     const ranges = collectTagRanges(textNodes);
@@ -501,7 +528,7 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
   }
 
   /** Targeted cleanup: remove empty highlight spans created by Search */
-  _cleanupMatchedTextEmpties(root) {
+  _cleanupMatchedTextEmpties(root: Element): void {
     root.querySelectorAll(".search-result-file-matched-text").forEach((el) => {
       if (!el.firstChild || (el.textContent || "").length === 0) {
         el.remove();
@@ -510,20 +537,20 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
   }
 
   /** ---------- Hide via class ---------- */
-  _applyHideClass(leafEl, shouldHide) {
-    if (!(leafEl instanceof HTMLElement)) {
+  _applyHideClass(leafEl: Element, shouldHide: boolean): void {
+    if (!leafEl.instanceOf(HTMLElement)) {
       return;
     }
-    leafEl.classList.toggle("stisr-hide-tags", !!shouldHide);
+    leafEl.classList.toggle("stisr-hide-tags", shouldHide);
   }
 
-  _applyHideStateToLeaves() {
+  _applyHideStateToLeaves(): void {
     const leaves = this.app.workspace.getLeavesOfType("search");
-    if (!leaves?.length) {
+    if (!leaves.length) {
       return;
     }
     for (const leaf of leaves) {
-      const leafRoot = leaf.view?.containerEl || leaf.containerEl;
+      const leafRoot = leaf.view?.containerEl;
       if (!leafRoot) {
         continue;
       }
@@ -535,9 +562,9 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
     }
   }
 
-  _clearAllHideClasses() {
+  _clearAllHideClasses(): void {
     for (const leaf of this.app.workspace.getLeavesOfType("search")) {
-      const leafRoot = leaf.view?.containerEl || leaf.containerEl;
+      const leafRoot = leaf.view?.containerEl;
       if (!leafRoot) {
         continue;
       }
@@ -547,13 +574,13 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
   }
 
   /** ---------- Revert on disable ---------- */
-  _revertAllSearchLeaves() {
+  _revertAllSearchLeaves(): void {
     const leaves = this.app.workspace.getLeavesOfType("search");
-    if (!leaves?.length) {
+    if (!leaves.length) {
       return;
     }
     for (const leaf of leaves) {
-      const leafRoot = leaf.view?.containerEl || leaf.containerEl;
+      const leafRoot = leaf.view?.containerEl;
       if (!leafRoot) {
         continue;
       }
@@ -562,14 +589,7 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
       const resultsRoots = leafEl.querySelectorAll(RESULTS_SELECTOR);
       resultsRoots.forEach((resultsRoot) => {
         resultsRoot.querySelectorAll(".stisr-tag, .search-tag").forEach((s) => {
-          const p = s.parentNode;
-          if (!p) {
-            return;
-          }
-          while (s.firstChild) {
-            p.insertBefore(s.firstChild, s);
-          }
-          p.removeChild(s);
+          s.replaceWith(...Array.from(s.childNodes));
         });
         this._cleanupMatchedTextEmpties(resultsRoot);
       });
@@ -578,16 +598,18 @@ module.exports = class StyleTagsInSearchResultsPlugin extends Plugin {
     }
     this._clearAllHideClasses();
   }
-};
+}
 
 /** Settings tab (no headings, per guidelines) */
 class StyleTagsInSearchResultsSettingTab extends PluginSettingTab {
-  constructor(app, plugin) {
+  plugin: StyleTagsInSearchResultsPlugin;
+
+  constructor(app: App, plugin: StyleTagsInSearchResultsPlugin) {
     super(app, plugin);
     this.plugin = plugin;
   }
 
-  display() {
+  display(): void {
     const { containerEl } = this;
     containerEl.empty();
 
@@ -601,7 +623,7 @@ class StyleTagsInSearchResultsSettingTab extends PluginSettingTab {
         text
           .setPlaceholder(DEFAULT_SETTINGS.wrapperClass)
           .setValue(this.plugin.settings.wrapperClass)
-          .onChange(async (value) => {
+          .onChange((value) => {
             this.plugin.settings.wrapperClass =
               (value || "").trim() || DEFAULT_SETTINGS.wrapperClass;
             this.plugin._saveSettings();
@@ -614,8 +636,8 @@ class StyleTagsInSearchResultsSettingTab extends PluginSettingTab {
       .setName("Hide wrapped hashtags in search")
       .setDesc("Toggles a CSS class on the search leaf; themes/snippets control visibility.")
       .addToggle((toggle) =>
-        toggle.setValue(!!this.plugin.settings.hideInSearch).onChange(async (val) => {
-          this.plugin.settings.hideInSearch = !!val;
+        toggle.setValue(this.plugin.settings.hideInSearch).onChange((val) => {
+          this.plugin.settings.hideInSearch = val;
           this.plugin._saveSettings();
           this.plugin._applyHideStateToLeaves(); // immediate
           this.plugin._bindToSearchLeaves(false); // keep watchers in sync
@@ -627,8 +649,8 @@ class StyleTagsInSearchResultsSettingTab extends PluginSettingTab {
       .setName("Advanced options")
       .setDesc("Performance tuning for large result sets.")
       .addToggle((toggle) =>
-        toggle.setValue(!!this.plugin.settings.showAdvanced).onChange(async (val) => {
-          this.plugin.settings.showAdvanced = !!val;
+        toggle.setValue(this.plugin.settings.showAdvanced).onChange((val) => {
+          this.plugin.settings.showAdvanced = val;
           this.plugin._saveSettings();
           this.display(); // re-render to show/hide controls
         }),
@@ -644,10 +666,12 @@ class StyleTagsInSearchResultsSettingTab extends PluginSettingTab {
         .addText((text) =>
           text
             .setPlaceholder(String(DEFAULT_SETTINGS.wrapAheadPx))
-            .setValue(String(this.plugin.settings.wrapAheadPx ?? DEFAULT_SETTINGS.wrapAheadPx))
-            .onChange(async (v) => {
-              const n = Math.max(0, Number(v) || DEFAULT_SETTINGS.wrapAheadPx);
-              this.plugin.settings.wrapAheadPx = n;
+            .setValue(String(this.plugin.settings.wrapAheadPx))
+            .onChange((v) => {
+              this.plugin.settings.wrapAheadPx = Math.max(
+                0,
+                Number(v) || DEFAULT_SETTINGS.wrapAheadPx,
+              );
               this.plugin._saveSettings();
               this.plugin._bindToSearchLeaves(false); // rebuild IO with new margin
             }),
@@ -655,8 +679,3 @@ class StyleTagsInSearchResultsSettingTab extends PluginSettingTab {
     }
   }
 }
-
-// Test-only exports. Obsidian only instantiates module.exports as a class,
-// so attaching named helpers here has no runtime cost.
-module.exports.collectTagRanges = collectTagRanges;
-module.exports.wrapRanges = wrapRanges;

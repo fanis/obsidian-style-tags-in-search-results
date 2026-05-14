@@ -1,13 +1,15 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "CommonJS",
-    "allowJs": true,
-    "checkJs": false,
-    "noEmit": true,
-    "moduleResolution": "Node",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "strict": true,
+    "noImplicitAny": true,
+    "isolatedModules": true,
     "esModuleInterop": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "noEmit": true
   },
-  "include": ["main.js"]
+  "include": ["main.ts"]
 }
