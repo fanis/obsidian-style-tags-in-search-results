@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [1.1.2] - 2026-05-14
 ### Changed
 - Migrated the plugin source to TypeScript. `main.js` is now an esbuild bundle built from `main.ts`, with strict type checking and lint wired into the build. No change to plugin behavior; this clears the type-safety warnings raised by the 1.1.1 community review.
 
