@@ -1,6 +1,6 @@
 import esbuild from "esbuild";
 import process from "process";
-import builtins from "builtin-modules";
+import { builtinModules } from "node:module";
 
 const banner = "/* SPDX-License-Identifier: MIT */";
 
@@ -11,7 +11,7 @@ const ctx = await esbuild.context({
   entryPoints: ["main.ts"],
   bundle: true,
   // Obsidian provides these at runtime; never bundle them.
-  external: ["obsidian", "electron", ...builtins],
+  external: ["obsidian", "electron", ...builtinModules],
   format: "cjs",
   target: "es2022",
   logLevel: "info",

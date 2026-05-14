@@ -18,6 +18,16 @@ export default [
     },
   },
   {
+    // obsidianmd's recommended config applies this type-aware rule globally,
+    // including to package.json, where there is no TS program for it to read.
+    // Disabling it here lets `npm run lint` cover package.json (manifest +
+    // dependency rules) without the rule erroring at load time.
+    files: ["package.json"],
+    rules: {
+      "obsidianmd/no-plugin-as-component": "off",
+    },
+  },
+  {
     // main.js is the esbuild output, not source; everything else is tooling.
     ignores: [
       "node_modules/**",

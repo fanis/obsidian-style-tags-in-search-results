@@ -9,12 +9,11 @@
     "build": "tsc --noEmit && node esbuild.config.mjs production",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "eslint main.ts",
+    "lint": "eslint main.ts package.json",
     "format": "prettier --write \"**/*.{ts,js,mjs,cjs,json,md,yml,yaml}\"",
     "format:check": "prettier --check \"**/*.{ts,js,mjs,cjs,json,md,yml,yaml}\""
   },
   "devDependencies": {
-    "builtin-modules": "5.2.0",
     "esbuild": "0.28.0",
     "eslint": "9.39.4",
     "eslint-plugin-obsidianmd": "0.3.0",
