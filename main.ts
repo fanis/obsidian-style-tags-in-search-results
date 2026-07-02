@@ -18,13 +18,12 @@ const DEFAULT_SETTINGS: StisrSettings = {
 };
 
 /** Tag parsing */
-const USE_UNICODE = true;
-const TAG_CHAR = USE_UNICODE ? /[\p{L}\p{N}_/-]/u : /[A-Za-z0-9_/-]/;
-const ALNUM = USE_UNICODE ? /[\p{L}\p{N}]/u : /[A-Za-z0-9]/;
-const DIGIT = USE_UNICODE ? /\p{N}/u : /[0-9]/;
+const TAG_CHAR = /[\p{L}\p{N}_/-]/u;
+const ALNUM = /[\p{L}\p{N}]/u;
+const DIGIT = /\p{N}/u;
 // Obsidian's tag parser rejects leading '-' and '/' after '#'. Require the
 // first char after '#' to be a letter, digit, or underscore.
-const FIRST_TAG_CHAR = USE_UNICODE ? /[\p{L}\p{N}_]/u : /[A-Za-z0-9_]/;
+const FIRST_TAG_CHAR = /[\p{L}\p{N}_]/u;
 const BOUNDARY = /[\s.,;:!?()[\]{}<>"'“”‘’]/;
 
 /** Selectors */
@@ -52,10 +51,23 @@ interface EatResult {
 // neither changed. Safe because Obsidian's Search re-renders rows on query
 // changes rather than mutating text nodes in place — the collision case
 // (same length + same '#' count but different content) doesn't occur there.
-function sig(el: Element): string {
-  const t = el.textContent || "";
-  const h = (t.match(/#/g) || []).length;
-  return `${t.length}|${h}`;
+function sig(text: string): string {
+  let h = 0;
+  for (let i = text.indexOf("#"); i !== -1; i = text.indexOf("#", i + 1)) {
+    h++;
+  }
+  return `${text.length}|${h}`;
+}
+
+/** Replace a wrapper element with its children (undo a wrap). */
+function unwrap(el: Element): void {
+  el.replaceWith(...Array.from(el.childNodes));
+}
+
+/** Parse a non-negative px value; fall back to the default on anything else. */
+export function parseWrapAheadPx(value: unknown): number {
+  const n = typeof value === "string" ? Number(value.trim() || NaN) : Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_SETTINGS.wrapAheadPx;
 }
 
 function eatInNode(
@@ -164,8 +176,9 @@ export function collectTagRanges(textNodes: Text[]): TagRange[] {
           break;
         }
         const next = textNodes[nextIdx];
-        const first = (next.nodeValue || "")[0];
-        if (!isTagChar(first)) {
+        const nextText = next.nodeValue || "";
+        // Skip empty text nodes; only a non-tag first char stops the extension.
+        if (nextText.length > 0 && !isTagChar(nextText[0])) {
           break;
         }
         endNode = next;
@@ -235,7 +248,6 @@ export default class StyleTagsInSearchResultsPlugin extends Plugin {
   // state
   _observers: MutationObserver[] = [];
   _rowSig: WeakMap<Element, string> = new WeakMap();
-  _processingRoots: WeakSet<Element> = new WeakSet();
   _rowQueue: Set<HTMLElement> = new Set();
   _rafId: number | null = null;
   _io: IntersectionObserver | null = null;
@@ -247,6 +259,27 @@ export default class StyleTagsInSearchResultsPlugin extends Plugin {
     120,
     true,
   );
+
+  // Settings text fields fire onChange per keystroke; rebinding tears down and
+  // rebuilds every observer plus a full rescan, so coalesce bursts. A forced
+  // rebind wins over a plain one within the same burst.
+  _rebindForcePending = false;
+  _rebindSoon: Debouncer<[boolean], void> = debounce(
+    (force: boolean) => {
+      const doForce = force || this._rebindForcePending;
+      this._rebindForcePending = false;
+      this._bindToSearchLeaves(doForce);
+    },
+    250,
+    true,
+  );
+
+  _requestRebind(force: boolean): void {
+    if (force) {
+      this._rebindForcePending = true;
+    }
+    this._rebindSoon(force);
+  }
 
   async onload(): Promise<void> {
     const saved = (await this.loadData()) as Partial<StisrSettings> | null;
@@ -262,11 +295,7 @@ export default class StyleTagsInSearchResultsPlugin extends Plugin {
         this._io = null;
       }
     });
-    this.register(() => {
-      if (this._rafId) {
-        window.cancelAnimationFrame(this._rafId);
-      }
-    });
+    this.register(() => this._cancelQueuedWork());
 
     // Bind now and on layout changes
     this._bindToSearchLeaves(true);
@@ -285,16 +314,44 @@ export default class StyleTagsInSearchResultsPlugin extends Plugin {
   // can guarantee the write lands).
   onunload(): void {
     void this._saveSettings.run();
+    this._rebindSoon.cancel();
     this._detachAllObservers();
     if (this._io) {
       this._io.disconnect();
       this._io = null;
     }
-    if (this._rafId) {
-      window.cancelAnimationFrame(this._rafId);
-    }
+    this._cancelQueuedWork();
     this._revertAllSearchLeaves();
-    this._clearAllHideClasses();
+  }
+
+  _cancelQueuedWork(): void {
+    if (this._rafId != null) {
+      window.cancelAnimationFrame(this._rafId);
+      this._rafId = null;
+    }
+    this._rowQueue.clear();
+  }
+
+  /** Resolve the leaf-content element for every open Search leaf. */
+  _getSearchLeafEls(): Element[] {
+    const els: Element[] = [];
+    for (const leaf of this.app.workspace.getLeavesOfType("search")) {
+      const leafRoot = leaf.view?.containerEl;
+      if (!leafRoot) {
+        continue;
+      }
+      els.push(leafRoot.closest('.workspace-leaf-content[data-type="search"]') || leafRoot);
+    }
+    return els;
+  }
+
+  /** Wrap immediately when hiding (minimize flash), else batch to next frame. */
+  _enqueueOrProcess(row: Element): void {
+    if (this.settings.hideInSearch) {
+      this._processRow(row, false);
+    } else {
+      this._queueRow(row);
+    }
   }
 
   /** Attach observers, per Search leaf */
@@ -305,16 +362,13 @@ export default class StyleTagsInSearchResultsPlugin extends Plugin {
       this._io = null;
     }
 
-    const leaves = this.app.workspace.getLeavesOfType("search");
-    if (!leaves.length) {
+    const leafEls = this._getSearchLeafEls();
+    if (!leafEls.length) {
       return;
     }
 
     // IntersectionObserver to catch rows revealed during scroll/virtualization
-    const rootMarginPx = Math.max(
-      0,
-      Number(this.settings.wrapAheadPx) || DEFAULT_SETTINGS.wrapAheadPx,
-    );
+    const rootMarginPx = parseWrapAheadPx(this.settings.wrapAheadPx);
     this._io = new IntersectionObserver(
       (entries) => {
         for (const e of entries) {
@@ -325,29 +379,18 @@ export default class StyleTagsInSearchResultsPlugin extends Plugin {
           if (!row.instanceOf(HTMLElement)) {
             continue;
           }
-          // Immediate wrap if hide is ON (minimize flash), else batch to next frame
-          if (this.settings.hideInSearch) {
-            this._processRow(row, false);
-          } else {
-            this._queueRow(row);
-          }
+          this._enqueueOrProcess(row);
         }
       },
       { root: null, rootMargin: `${rootMarginPx}px 0px`, threshold: 0 },
     );
 
-    for (const leaf of leaves) {
-      const leafRoot = leaf.view?.containerEl;
-      if (!leafRoot) {
-        continue;
-      }
-      const leafEl = leafRoot.closest('.workspace-leaf-content[data-type="search"]') || leafRoot;
-
+    for (const leafEl of leafEls) {
       // Apply hide state at leaf level
       this._applyHideClass(leafEl, this.settings.hideInSearch);
 
       // Initial pass
-      const resultsRoot = leafEl.querySelector(".search-results-children, .search-results-info");
+      const resultsRoot = leafEl.querySelector(RESULTS_SELECTOR);
       if (resultsRoot) {
         this._scanRoot(resultsRoot, forceFullScan);
       }
@@ -377,7 +420,7 @@ export default class StyleTagsInSearchResultsPlugin extends Plugin {
 
         if (swapped) {
           // Container swapped - full scan
-          const cur = leafEl.querySelector(".search-results-children, .search-results-info");
+          const cur = leafEl.querySelector(RESULTS_SELECTOR);
           if (cur) {
             this._scanRoot(cur, true);
           }
@@ -392,19 +435,11 @@ export default class StyleTagsInSearchResultsPlugin extends Plugin {
                 continue;
               }
               if (n.matches(ROW_SELECTOR)) {
-                if (this.settings.hideInSearch) {
-                  this._processRow(n, false);
-                } else {
-                  this._queueRow(n);
-                }
+                this._enqueueOrProcess(n);
                 this._io?.observe(n);
               }
               n.querySelectorAll(ROW_SELECTOR).forEach((row) => {
-                if (this.settings.hideInSearch) {
-                  this._processRow(row, false);
-                } else {
-                  this._queueRow(row);
-                }
+                this._enqueueOrProcess(row);
                 this._io?.observe(row);
               });
             }
@@ -446,27 +481,19 @@ export default class StyleTagsInSearchResultsPlugin extends Plugin {
     }
   }
 
-  /** Full container scan (idempotent; guarded) */
+  /** Full container scan (idempotent) */
   _scanRoot(root: Element, force = false): void {
-    if (this._processingRoots.has(root)) {
-      return;
-    }
-    this._processingRoots.add(root);
-    try {
-      const rows = root.querySelectorAll(ROW_SELECTOR);
-      rows.forEach((row) => {
-        // Observe for viewport triggers
-        this._io?.observe(row);
-        // Immediate when hide is on (minimize flash), else queue to next frame
-        if (this.settings.hideInSearch) {
-          this._processRow(row, force);
-        } else {
-          this._queueRow(row);
-        }
-      });
-    } finally {
-      this._processingRoots.delete(root);
-    }
+    root.querySelectorAll(ROW_SELECTOR).forEach((row) => {
+      // Observe for viewport triggers
+      this._io?.observe(row);
+      // Forced scans must bypass the signature check, so never route them
+      // through the queue (which always processes with force=false).
+      if (force || this.settings.hideInSearch) {
+        this._processRow(row, force);
+      } else {
+        this._queueRow(row);
+      }
+    });
   }
 
   /** Process a single result row (micro-opt + signature check) */
@@ -488,19 +515,14 @@ export default class StyleTagsInSearchResultsPlugin extends Plugin {
       return;
     }
 
-    const curSig = sig(row);
+    const curSig = sig(textPeek);
     const lastSig = this._rowSig.get(row);
     if (!force && lastSig === curSig) {
       return;
     } // nothing changed, skip
 
     // unwrap previous wraps (ours + legacy) if present
-    const existingWraps = row.querySelectorAll(".stisr-tag, .search-tag");
-    if (force || existingWraps.length > 0) {
-      existingWraps.forEach((s) => {
-        s.replaceWith(...Array.from(s.childNodes));
-      });
-    }
+    row.querySelectorAll(".stisr-tag, .search-tag").forEach(unwrap);
 
     this._wrapAllTags(row);
     this._cleanupMatchedTextEmpties(row);
@@ -511,10 +533,10 @@ export default class StyleTagsInSearchResultsPlugin extends Plugin {
   }
 
   /** One-pass wrapper */
-  _wrapAllTags(root: Element): boolean {
+  _wrapAllTags(root: Element): void {
     const doc = root.ownerDocument;
     if (!doc) {
-      return false;
+      return;
     }
     const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     const textNodes: Text[] = [];
@@ -524,7 +546,6 @@ export default class StyleTagsInSearchResultsPlugin extends Plugin {
 
     const ranges = collectTagRanges(textNodes);
     wrapRanges(ranges, this.settings.wrapperClass || DEFAULT_SETTINGS.wrapperClass);
-    return ranges.length > 0;
   }
 
   /** Targeted cleanup: remove empty highlight spans created by Search */
@@ -545,58 +566,20 @@ export default class StyleTagsInSearchResultsPlugin extends Plugin {
   }
 
   _applyHideStateToLeaves(): void {
-    const leaves = this.app.workspace.getLeavesOfType("search");
-    if (!leaves.length) {
-      return;
-    }
-    for (const leaf of leaves) {
-      const leafRoot = leaf.view?.containerEl;
-      if (!leafRoot) {
-        continue;
-      }
-      const leafEl = leafRoot.closest('.workspace-leaf-content[data-type="search"]') || leafRoot;
+    for (const leafEl of this._getSearchLeafEls()) {
       this._applyHideClass(leafEl, this.settings.hideInSearch);
-    }
-    if (!this.settings.hideInSearch) {
-      this._clearAllHideClasses();
-    }
-  }
-
-  _clearAllHideClasses(): void {
-    for (const leaf of this.app.workspace.getLeavesOfType("search")) {
-      const leafRoot = leaf.view?.containerEl;
-      if (!leafRoot) {
-        continue;
-      }
-      const leafEl = leafRoot.closest('.workspace-leaf-content[data-type="search"]') || leafRoot;
-      this._applyHideClass(leafEl, false);
     }
   }
 
   /** ---------- Revert on disable ---------- */
   _revertAllSearchLeaves(): void {
-    const leaves = this.app.workspace.getLeavesOfType("search");
-    if (!leaves.length) {
-      return;
-    }
-    for (const leaf of leaves) {
-      const leafRoot = leaf.view?.containerEl;
-      if (!leafRoot) {
-        continue;
-      }
-      const leafEl = leafRoot.closest('.workspace-leaf-content[data-type="search"]') || leafRoot;
-
-      const resultsRoots = leafEl.querySelectorAll(RESULTS_SELECTOR);
-      resultsRoots.forEach((resultsRoot) => {
-        resultsRoot.querySelectorAll(".stisr-tag, .search-tag").forEach((s) => {
-          s.replaceWith(...Array.from(s.childNodes));
-        });
+    for (const leafEl of this._getSearchLeafEls()) {
+      leafEl.querySelectorAll(RESULTS_SELECTOR).forEach((resultsRoot) => {
+        resultsRoot.querySelectorAll(".stisr-tag, .search-tag").forEach(unwrap);
         this._cleanupMatchedTextEmpties(resultsRoot);
       });
-
       this._applyHideClass(leafEl, false);
     }
-    this._clearAllHideClasses();
   }
 }
 
@@ -627,7 +610,7 @@ class StyleTagsInSearchResultsSettingTab extends PluginSettingTab {
             this.plugin.settings.wrapperClass =
               (value || "").trim() || DEFAULT_SETTINGS.wrapperClass;
             this.plugin._saveSettings();
-            this.plugin._bindToSearchLeaves(true); // rebind + rescan with new class
+            this.plugin._requestRebind(true); // rebind + rescan with new class
           }),
       );
 
@@ -640,7 +623,7 @@ class StyleTagsInSearchResultsSettingTab extends PluginSettingTab {
           this.plugin.settings.hideInSearch = val;
           this.plugin._saveSettings();
           this.plugin._applyHideStateToLeaves(); // immediate
-          this.plugin._bindToSearchLeaves(false); // keep watchers in sync
+          this.plugin._requestRebind(false); // keep watchers in sync
         }),
       );
 
@@ -668,12 +651,9 @@ class StyleTagsInSearchResultsSettingTab extends PluginSettingTab {
             .setPlaceholder(String(DEFAULT_SETTINGS.wrapAheadPx))
             .setValue(String(this.plugin.settings.wrapAheadPx))
             .onChange((v) => {
-              this.plugin.settings.wrapAheadPx = Math.max(
-                0,
-                Number(v) || DEFAULT_SETTINGS.wrapAheadPx,
-              );
+              this.plugin.settings.wrapAheadPx = parseWrapAheadPx(v);
               this.plugin._saveSettings();
-              this.plugin._bindToSearchLeaves(false); // rebuild IO with new margin
+              this.plugin._requestRebind(false); // rebuild IO with new margin
             }),
         );
     }

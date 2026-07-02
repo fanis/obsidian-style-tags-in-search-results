@@ -1,5 +1,9 @@
 import { describe, test, expect } from "vitest";
-import StyleTagsInSearchResultsPlugin, { collectTagRanges, wrapRanges } from "../main.ts";
+import StyleTagsInSearchResultsPlugin, {
+  collectTagRanges,
+  wrapRanges,
+  parseWrapAheadPx,
+} from "../main.ts";
 
 if (!Node.prototype.instanceOf) {
   Node.prototype.instanceOf = function instanceOf(type) {
@@ -233,6 +237,35 @@ describe("collectTagRanges - cross-text-node tags", () => {
     expect(ranges).toHaveLength(1);
     expect(rangeText(ranges[0])).toBe("#alpha_beta");
   });
+
+  test("extends across an empty text node in the middle of a tag", () => {
+    const root = document.createElement("div");
+    const t1 = document.createTextNode("hello #foo");
+    const mark = document.createElement("mark");
+    const empty = document.createTextNode("");
+    mark.appendChild(empty);
+    const t2 = document.createTextNode("bar baz");
+    root.append(t1, mark, t2);
+
+    const ranges = collectTagRanges([t1, empty, t2]);
+    expect(ranges).toHaveLength(1);
+    expect(rangeText(ranges[0])).toBe("#foobar");
+
+    wrapRanges(ranges, "search-tag");
+    expect(root.querySelector(".stisr-tag").textContent).toBe("#foobar");
+    expect(root.textContent).toBe("hello #foobar baz");
+  });
+
+  test("accepts a tag followed only by a trailing empty text node", () => {
+    const root = document.createElement("div");
+    const t1 = document.createTextNode("hello #foo");
+    const empty = document.createTextNode("");
+    root.append(t1, empty);
+
+    const ranges = collectTagRanges([t1, empty]);
+    expect(ranges).toHaveLength(1);
+    expect(rangeText(ranges[0])).toBe("#foo");
+  });
 });
 
 describe("collectTagRanges - skip already-wrapped", () => {
@@ -349,6 +382,29 @@ describe("plugin row processing", () => {
     expect(el.querySelector(".stisr-tag").textContent).toBe("#longbar");
   });
 
+  test("force rescan re-wraps with the new wrapper class even when hide is off", () => {
+    const p = plugin();
+    p.settings.hideInSearch = false;
+    const root = document.createElement("div");
+    root.className = "search-results-children";
+    const el = document.createElement("div");
+    el.className = "search-result-file-match";
+    el.textContent = "hello #foo";
+    root.appendChild(el);
+    document.body.appendChild(root);
+
+    p._processRow(el);
+    expect(el.querySelector(".stisr-tag").className).toBe("stisr-tag search-tag");
+
+    p.settings.wrapperClass = "my-custom-class";
+    p._scanRoot(root, true);
+
+    const wraps = el.querySelectorAll(".stisr-tag");
+    expect(wraps).toHaveLength(1);
+    expect(wraps[0].className).toBe("stisr-tag my-custom-class");
+    expect(el.textContent).toBe("hello #foo");
+  });
+
   test("revert unwraps plugin and legacy spans in search leaves", () => {
     const p = plugin();
     const leafRoot = document.createElement("div");
@@ -373,5 +429,26 @@ describe("plugin row processing", () => {
     expect(leafRoot.classList.contains("stisr-hide-tags")).toBe(false);
     expect(leafRoot.textContent).toContain("#foo");
     expect(leafRoot.textContent).toContain("#bar");
+  });
+});
+
+describe("parseWrapAheadPx", () => {
+  test("accepts zero (explicitly disabling pre-wrap margin)", () => {
+    expect(parseWrapAheadPx("0")).toBe(0);
+    expect(parseWrapAheadPx(0)).toBe(0);
+  });
+
+  test("accepts positive values", () => {
+    expect(parseWrapAheadPx("256")).toBe(256);
+    expect(parseWrapAheadPx(64)).toBe(64);
+  });
+
+  test("falls back to the default for empty, negative, or garbage input", () => {
+    expect(parseWrapAheadPx("")).toBe(128);
+    expect(parseWrapAheadPx("  ")).toBe(128);
+    expect(parseWrapAheadPx("-5")).toBe(128);
+    expect(parseWrapAheadPx("abc")).toBe(128);
+    expect(parseWrapAheadPx(undefined)).toBe(128);
+    expect(parseWrapAheadPx(NaN)).toBe(128);
   });
 });
