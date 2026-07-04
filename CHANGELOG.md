@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- "Cut release" GitHub Action (`workflow_dispatch`): bumps the version (patch/minor/major or an explicit `x.y.z`) across `package.json`, `package-lock.json`, `manifest.json`, and `versions.json`, promotes the Unreleased changelog section, pushes the bump commit to `main`, and triggers the existing Release workflow. Enables cutting releases remotely from the Actions tab, `gh`, or the GitHub API.
+
+### Fixed
+- Changing the wrapper CSS class now re-wraps already-processed rows immediately even when "Hide wrapped hashtags" is off. Previously the forced rescan lost its force flag in the frame queue, so rows with an unchanged signature kept the old class until Search re-rendered them.
+- "Wrap ahead (px)" can now be set to `0`. Previously a `0` was coerced back to the default of 128 both when saving the setting and when building the IntersectionObserver.
+- Tag detection no longer stops at empty text nodes: a tag split across nodes with an empty text node in between (e.g. `#foo` + `""` + `bar`) is now detected and wrapped as one tag.
+- A pending animation-frame id of `0` is no longer skipped when cancelling queued work on unload, and the row queue is cleared so detached rows are not retained.
+
+### Changed
+- Settings changes now debounce the observer rebind (250 ms) instead of tearing down and rebuilding all observers plus a full rescan on every keystroke in the text fields.
+- Row-change detection avoids a second `textContent` read and a regex allocation per processed row.
+- Internal cleanup: removed the dead `USE_UNICODE` flag and the unused synchronous re-entrancy guard, deduplicated search-leaf resolution, unwrap logic, hide-class handling, and inline copies of the results-container selector.
 
 ## [1.1.3] - 2026-05-14
 ### Changed
