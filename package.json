@@ -1,7 +1,7 @@
 {
   "name": "obsidian-style-tags-in-search-results",
   "private": true,
-  "version": "1.1.3",
+  "version": "1.2.0",
   "description": "Obsidian plugin: style tags in search results.",
   "main": "main.js",
   "scripts": {

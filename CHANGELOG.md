@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [1.2.0] - 2026-07-04
 ### Added
 - "Cut release" GitHub Action (`workflow_dispatch`): bumps the version (patch/minor/major or an explicit `x.y.z`) across `package.json`, `package-lock.json`, `manifest.json`, and `versions.json`, promotes the Unreleased changelog section, pushes the bump commit to `main`, and triggers the existing Release workflow. Enables cutting releases remotely from the Actions tab, `gh`, or the GitHub API.
 
