@@ -1,0 +1,77 @@
+name: Cut release
+
+# Manually cut a new release: bump the version everywhere, promote the
+# Unreleased changelog section, push the bump commit to main, then trigger
+# the existing Release workflow to build, attest, and publish it.
+#
+# Trigger from the Actions tab, `gh workflow run cut-release.yml`, or the
+# GitHub API (workflow_dispatch), e.g. from a Claude Code session.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Semver bump type (ignored when an explicit version is given)"
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      version:
+        description: "Explicit version (x.y.z) to release instead of bumping"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: cut-release
+  cancel-in-progress: false
+
+jobs:
+  cut-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      # npm validates the semver and updates package.json + package-lock.json.
+      - name: Compute new version
+        id: ver
+        run: |
+          target="${{ inputs.version }}"
+          new_version="$(npm version "${target:-${{ inputs.bump }}}" --no-git-tag-version)"
+          echo "version=${new_version#v}" >> "$GITHUB_OUTPUT"
+          echo "Cutting release ${new_version#v}"
+
+      - name: Update manifest.json and versions.json
+        run: |
+          version="${{ steps.ver.outputs.version }}"
+          jq --arg v "$version" '.version = $v' manifest.json > manifest.tmp
+          mv manifest.tmp manifest.json
+          min_app="$(jq -r .minAppVersion manifest.json)"
+          jq --arg v "$version" --arg m "$min_app" '. + {($v): $m}' versions.json > versions.tmp
+          mv versions.tmp versions.json
+
+      - name: Promote Unreleased changelog section to the new version
+        run: |
+          version="${{ steps.ver.outputs.version }}"
+          today="$(date -u +%F)"
+          sed -i "s/^## \[Unreleased\]$/## [Unreleased]\n\n## [$version] - $today/" CHANGELOG.md
+
+      - name: Commit and push version bump
+        run: |
+          version="${{ steps.ver.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json manifest.json versions.json CHANGELOG.md
+          git commit -m "Release $version"
+          git push origin main
+
+      # Pushes made with GITHUB_TOKEN don't fire the Release workflow's push
+      # trigger, so dispatch it explicitly against the fresh main head.
+      - name: Trigger the release workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref main
